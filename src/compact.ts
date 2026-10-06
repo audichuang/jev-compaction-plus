@@ -259,7 +259,7 @@ export function drawerFor(
     for (const tool of message.toolUses) if (tool.text !== undefined && !texts.has(tool.tool_use_id)) texts.set(tool.tool_use_id, tool.text);
   }
   const byId = new Map(calls.map((call) => [call.id, call]));
-  const folder = `${drawerDir.replace(/[\\/]+$/, '')}/${new Date(stamp).toISOString().replace(/[:.]/g, '-')}`;
+  const folder = `${drawerDir.replace(/[\\/]+$/, '')}/${new Date(stamp).toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}`;
   const index: string[] = ['# Results moved here by Jev compaction', ''];
   for (const decision of decisions) {
     const call = byId.get(decision.id);
@@ -279,9 +279,9 @@ export function drawerFor(
     index.push(`- ${path}: ${call.tool} ${input.slice(0, 200)}`);
   }
   if (drawer.length > 0) {
-    drawer.push({ path: `${folder}/INDEX.md`, text: index.join('\n') + '\n' });
     // The drawer ignores itself, so it never ends up in a commit.
-    drawer.push({ path: `${drawerDir.replace(/[\\/]+$/, '')}/.gitignore`, text: '*\n' });
+    drawer.unshift({ path: `${drawerDir.replace(/[\\/]+$/, '')}/.gitignore`, text: '*\n' });
+    drawer.push({ path: `${folder}/INDEX.md`, text: index.join('\n') + '\n' });
   }
   return { stubs, drawer };
 }

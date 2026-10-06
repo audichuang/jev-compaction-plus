@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   compactSession,
   drawerPath,
@@ -86,24 +86,37 @@ describe('jev-compaction-plus: dropped results move to a drawer', () => {
     const out = await compact(input, jev(() => 0), { preserveRecentMessages: 1, drawerDir: '/proj/.jev-drawer' });
     const paths = out.drawer.map((f) => f.path);
     expect(paths).toHaveLength(3);
-    expect(paths[0]).toMatch(/^\/proj\/\.jev-drawer\/[^/]+\/t1-Read\.txt$/);
-    expect(paths[1]).toMatch(/\/INDEX\.md$/);
-    expect(paths[2]).toBe('/proj/.jev-drawer/.gitignore');
-    expect(out.drawer[2]!.text).toBe('*\n');
-    expect(out.drawer[0]!.text).toContain('line 399 INFO ok');
-    expect(out.drawer[0]!.text.startsWith('Read {"file_path":"logs/app.log"}')).toBe(true);
+    expect(paths[0]).toBe('/proj/.jev-drawer/.gitignore');
+    expect(paths[1]).toMatch(/^\/proj\/\.jev-drawer\/[^/]+\/t1-Read\.txt$/);
+    expect(paths[2]).toMatch(/\/INDEX\.md$/);
+    expect(out.drawer[0]!.text).toBe('*\n');
+    expect(out.drawer[1]!.text).toContain('line 399 INFO ok');
+    expect(out.drawer[1]!.text.startsWith('Read {"file_path":"logs/app.log"}')).toBe(true);
 
     // The assistant's tool_use message stays the engine's own: rebuilding it orphans sibling calls.
     expect(out.messages[1]).toBe(input[1]);
     const label = out.messages[2]!.toolResults![0]!.text;
     expect(label).toBe(
-      `[Jev compaction moved this ${bigLog.length}-char output to ${paths[0]}. Read that file if you need it again.]`,
+      `[Jev compaction moved this ${bigLog.length}-char output to ${paths[1]}. Read that file if you need it again.]`,
     );
     expect(out.messages).toHaveLength(input.length);
 
     const session = toSessionMessages(input, out.messages);
     expect(session[1]!.handle).toBe('h-tool-1');
     expect(session[2]!.handle).toBeUndefined();
+  });
+
+  it('uses a unique drawer folder when compactions share a timestamp', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1234567890);
+    try {
+      const first = await compact(transcript(), jev(() => 0), { preserveRecentMessages: 1, drawerDir: '/proj/.jev-drawer' });
+      const second = await compact(transcript(), jev(() => 0), { preserveRecentMessages: 1, drawerDir: '/proj/.jev-drawer' });
+      const firstFolder = first.drawer[1]!.path.split('/').slice(0, -1).join('/');
+      const secondFolder = second.drawer[1]!.path.split('/').slice(0, -1).join('/');
+      expect(firstFolder).not.toBe(secondFolder);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('writes nothing when nothing is dropped, and deletes like the original when drawerDir is empty', async () => {

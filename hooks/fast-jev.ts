@@ -325,7 +325,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       if (ratio < config.minReductionRatio) {
         notify(
           $,
-          `fallback to built-in summary (below ${percent(config.minReductionRatio)} minimum: ${summarize(result)})`,
+          `${event.trigger === 'plugin' ? 'skipped, conversation unchanged' : 'fallback to built-in summary'} (below ${percent(config.minReductionRatio)} minimum: ${summarize(result)})`,
         );
         return event.trigger === 'plugin' ? { skip: `below ${percent(config.minReductionRatio)} minimum` } : next(event);
       }
@@ -337,7 +337,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     } catch (error) {
       notify(
         $,
-        `fallback to built-in summary (${error instanceof Error ? error.message : String(error)})`,
+        `${event.trigger === 'plugin' ? 'skipped, conversation unchanged' : 'fallback to built-in summary'} (${error instanceof Error ? error.message : String(error)})`,
       );
       return event.trigger === 'plugin' ? { skip: error instanceof Error ? error.message : String(error) } : next(event);
     }

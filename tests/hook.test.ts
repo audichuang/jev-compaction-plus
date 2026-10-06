@@ -204,6 +204,13 @@ describe('registered hooks', () => {
     expect(h.compactCalls).toBe(2);
   });
 
+  it('says a skipped plugin compaction left the conversation unchanged', async () => {
+    const h = fake$();
+    await invoke(h, 'session.compact', event('plugin'));
+    expect(h.logs.some((line: string) => line.startsWith('skipped, conversation unchanged'))).toBe(true);
+    expect(h.logs.some((line: string) => line.startsWith('fallback'))).toBe(false);
+  });
+
   it('compacts below five percent when the threshold is set that low', async () => {
     const h = fake$({ compactAtPercent: 1 });
     h.percent = 2;

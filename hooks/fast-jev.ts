@@ -299,6 +299,7 @@ function notify(
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
   let compacting = false;
+  let lastSkipPercent = 0;
 
   on('session.compact', async ($, event, next) => {
     try {
@@ -312,16 +313,21 @@ export const register: Register = (on: On, options: PluginOptions) => {
         return { status: response.status, ok: response.ok, text: response.text };
       });
       for (const line of decisionLogLines(result)) $.ui.log(line);
-      if (reductionRatio(result) >= config.minReductionRatio) {
+      const ratio = reductionRatio(result);
+      if (ratio >= config.minReductionRatio) {
         // jev-compaction-plus: write the drawer first; if that fails, nothing is dropped
-        for (const file of result.drawer) await $.fs.write(file.path, file.text);
+        // ponytail: no split for >4 MiB results; tool output caps keep them far below
+        for (const file of result.drawer) {
+          if (file.path.endsWith('/.gitignore') && await $.fs.exists(file.path)) continue;
+          await $.fs.write(file.path, file.text);
+        }
       }
-      if (reductionRatio(result) < config.minReductionRatio) {
+      if (ratio < config.minReductionRatio) {
         notify(
           $,
           `fallback to built-in summary (below ${percent(config.minReductionRatio)} minimum: ${summarize(result)})`,
         );
-        return next(event);
+        return event.trigger === 'plugin' ? { skip: `below ${percent(config.minReductionRatio)} minimum` } : next(event);
       }
       notify(
         $,
@@ -333,17 +339,22 @@ export const register: Register = (on: On, options: PluginOptions) => {
         $,
         `fallback to built-in summary (${error instanceof Error ? error.message : String(error)})`,
       );
-      return next(event);
+      return event.trigger === 'plugin' ? { skip: error instanceof Error ? error.message : String(error) } : next(event);
     }
   });
 
   on('turn.complete', async ($, event: TurnCompleteInput, next) => {
-    if (compacting) return next(event);
+    if (compacting || event.agentId) return next(event);
+    compacting = true;
     try {
       const { context } = await $.session.usage();
-      if ((context.percent ?? 0) < configured.compactAtPercent) return next(event);
-      compacting = true;
-      await $.session.compact();
+      const percentUsed = context.percent ?? 0;
+      if (percentUsed < configured.compactAtPercent || percentUsed < lastSkipPercent + 5) return next(event);
+      const result = await $.session.compact();
+      if (result && 'skip' in result) {
+        lastSkipPercent = percentUsed;
+        // ponytail: fixed +5-point backoff; make it an option if 5 proves wrong
+      }
     } catch (error) {
       $.ui.log(
         `auto-compact skipped (${error instanceof Error ? error.message : String(error)})`,

@@ -6,6 +6,7 @@ import {
   resolveHookConfig,
   summarize,
   toSessionMessages,
+  register,
 } from '../hooks/fast-jev.ts';
 import { applyDecisions, collectToolCalls, decideCall, type Message } from '../src/index.js';
 
@@ -49,6 +50,25 @@ function jevFetch(answer: (name: string) => number, bodies: string[] = []) {
     );
     return { status: 200, ok: true, text: JSON.stringify({ answers }) };
   };
+}
+
+function fake$() {
+  const handlers: Record<string, (...args: any[]) => any> = {};
+  const writes: string[] = [];
+  const logs: string[] = [];
+  let compactCalls = 0;
+  let percentUsed = 0;
+  let fetcher: any = async () => ({ status: 500, ok: false, text: 'error' });
+  let writeFails = false;
+  const $: any = {
+    userConfig: { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1 },
+    http: { fetch: (...args: any[]) => fetcher(...args) },
+    fs: { exists: async () => false, write: async (path: string) => { if (writeFails) throw Error('write failed'); writes.push(path); } },
+    ui: { log: (s: string) => logs.push(s), toast: () => {} },
+    session: { cwd: async () => '/tmp', usage: async () => ({ context: { percent: percentUsed } }), compact: async () => { compactCalls++; return { skip: 'skip' }; } },
+  };
+  register((name: string, handler: any) => { handlers[name] = handler; }, { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1 } as any);
+  return { $, handlers, writes, logs, get compactCalls() { return compactCalls; }, set percent(p: number) { percentUsed = p; }, set fetch(f: any) { fetcher = f; }, set writeFails(v: boolean) { writeFails = v; } };
 }
 
 describe('hook config', () => {
@@ -146,5 +166,48 @@ describe('compactSession', () => {
     await expect(
       compactSession(transcript(), { ...config, apiKey: 'k' }, async () => ({ status: 500, ok: false, text: 'x' })),
     ).rejects.toThrow(/500/);
+  });
+});
+
+describe('registered hooks', () => {
+  const event = (trigger: string) => ({ messages: transcript(), trigger });
+  const okFetch = jevFetch(() => 0);
+  const invoke = (h: ReturnType<typeof fake$>, name: string, e: any, next = (x: any) => ({ next: x })) => h.handlers[name](h.$, e, next);
+
+  it('skips plugin failures and falls back for manual failures', async () => {
+    const h = fake$();
+    expect(await invoke(h, 'session.compact', event('plugin'))).toEqual({ skip: 'Jev request failed (500): error' });
+    expect(await invoke(h, 'session.compact', event('manual'))).toHaveProperty('next');
+  });
+
+  it('skips plugin compaction when drawer writing fails', async () => {
+    const h = fake$(); h.fetch = okFetch; h.writeFails = true;
+    expect(await invoke(h, 'session.compact', event('plugin'))).toMatchObject({ skip: 'write failed' });
+  });
+
+  it('does not compact subagents or overlapping turns', async () => {
+    const h = fake$(); h.percent = 70;
+    await invoke(h, 'turn.complete', { agentId: 'child' });
+    let release!: () => void;
+    h.$.session.usage = () => new Promise((resolve: any) => { release = () => resolve({ context: { percent: 70 } }); });
+    const first = invoke(h, 'turn.complete', {});
+    await Promise.resolve();
+    const second = invoke(h, 'turn.complete', {});
+    release();
+    await Promise.all([first, second]);
+    expect(h.compactCalls).toBe(1);
+  });
+
+  it('backs off five percentage points after a skip', async () => {
+    const h = fake$();
+    for (const p of [61, 63, 66]) { h.percent = p; await invoke(h, 'turn.complete', {}); }
+    expect(h.compactCalls).toBe(2);
+  });
+
+  it('preserves an existing drawer gitignore', async () => {
+    const h = fake$(); h.fetch = okFetch;
+    h.$.fs.exists = async (path: string) => path.endsWith('/.gitignore');
+    await invoke(h, 'session.compact', event('manual'));
+    expect(h.writes.some((path: string) => path.endsWith('/.gitignore'))).toBe(false);
   });
 });

@@ -299,7 +299,7 @@ function notify(
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
   let compacting = false;
-  let lastSkipPercent = 0;
+  let lastSkipPercent = -Infinity;
 
   on('session.compact', async ($, event, next) => {
     try {

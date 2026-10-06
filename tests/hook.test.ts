@@ -52,7 +52,7 @@ function jevFetch(answer: (name: string) => number, bodies: string[] = []) {
   };
 }
 
-function fake$() {
+function fake$(options: Record<string, unknown> = {}) {
   const handlers: Record<string, (...args: any[]) => any> = {};
   const writes: string[] = [];
   const logs: string[] = [];
@@ -67,7 +67,7 @@ function fake$() {
     ui: { log: (s: string) => logs.push(s), toast: () => {} },
     session: { cwd: async () => '/tmp', usage: async () => ({ context: { percent: percentUsed } }), compact: async () => { compactCalls++; return { skip: 'skip' }; } },
   };
-  register((name: string, handler: any) => { handlers[name] = handler; }, { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1 } as any);
+  register((name: string, handler: any) => { handlers[name] = handler; }, { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1, ...options } as any);
   return { $, handlers, writes, logs, get compactCalls() { return compactCalls; }, set percent(p: number) { percentUsed = p; }, set fetch(f: any) { fetcher = f; }, set writeFails(v: boolean) { writeFails = v; } };
 }
 
@@ -202,6 +202,13 @@ describe('registered hooks', () => {
     const h = fake$();
     for (const p of [61, 63, 66]) { h.percent = p; await invoke(h, 'turn.complete', {}); }
     expect(h.compactCalls).toBe(2);
+  });
+
+  it('compacts below five percent when the threshold is set that low', async () => {
+    const h = fake$({ compactAtPercent: 1 });
+    h.percent = 2;
+    await invoke(h, 'turn.complete', {});
+    expect(h.compactCalls).toBe(1);
   });
 
   it('preserves an existing drawer gitignore', async () => {

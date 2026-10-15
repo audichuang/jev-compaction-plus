@@ -37,7 +37,7 @@
       "type": "number",
       "title": "Minimum reduction ratio",
       "description": "Minimum estimated character reduction required to replace history.",
-      "default": 0.55
+      "default": 0.25
     },
     "maxStateTokens": {
       "type": "number",

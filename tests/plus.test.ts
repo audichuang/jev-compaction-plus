@@ -74,7 +74,8 @@ describe('jev-compaction-plus: small results stay', () => {
   it('keeps results under minDropChars whatever Jev says', async () => {
     const out = await compact(transcript(), jev(() => 0), { preserveRecentMessages: 1 });
     expect(out.decisions.map((d) => [d.id, d.action, d.reason])).toEqual([
-      ['t1', 'drop_call', 'call_dropped'],
+      // Jev said drop the call, but the drawer keeps it: reported as a moved result.
+      ['t1', 'drop_result', 'result_dropped'],
       ['t2', 'keep', 'small'],
     ]);
   });

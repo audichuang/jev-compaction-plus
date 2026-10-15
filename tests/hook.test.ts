@@ -129,7 +129,7 @@ describe('session message mapping', () => {
     const out = toSessionMessages(messages, messages);
     expect(out.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'user']);
     expect(out[1]).toMatchObject({ text: 'Reading.' });
-    expect(out[1]!.toolUses.map((t) => t.tool_use_id)).toEqual(['p1', 'p2']);
+    expect(out[1]!.toolUses.map((tool: { tool_use_id: string }) => tool.tool_use_id)).toEqual(['p1', 'p2']);
     expect(out[1]!.handle).toBeUndefined();
   });
 

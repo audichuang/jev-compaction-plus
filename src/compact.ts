@@ -16,7 +16,9 @@ import type {
 
 export const DEFAULT_OPTIONS: ResolvedCompactOptions = {
   goal: '',
-  keepThreshold: 0.5,
+  // Jev's keepResult runs low (upstream #56: at 0.5 almost nothing is kept); with the
+  // drawer a wrong drop costs one file read, so err on keeping.
+  keepThreshold: 0.2,
   preserveRecentMessages: 6,
   maxStateTokens: 14_000,
   maxRequestTokens: 30_000,
@@ -340,10 +342,18 @@ export async function compact(
     for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
   }
 
-  const decisions = calls.map((call) =>
+  const decided = calls.map((call) =>
     decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved),
   );
-  const { stubs, drawer } = drawerFor(messages, calls, decisions, resolved.drawerDir, started);
+  const { stubs, drawer } = drawerFor(messages, calls, decided, resolved.drawerDir, started);
+  // A call whose result went to the drawer keeps its tool_use, so report it as a moved
+  // result: the toast and decision log say what the session actually lost.
+  const toolUseIds = new Map(calls.map((call) => [call.id, call.tool_use_id]));
+  const decisions = decided.map((decision): CallDecision =>
+    decision.action === 'drop_call' && stubs.has(toolUseIds.get(decision.id) ?? '')
+      ? { ...decision, action: 'drop_result', reason: 'result_dropped' }
+      : decision,
+  );
   const kept = applyDecisions(
     messages,
     decisions,

@@ -102,7 +102,10 @@ describe('jev-compaction-plus: dropped results move to a drawer', () => {
     expect(out.messages).toHaveLength(input.length);
 
     const session = toSessionMessages(input, out.messages);
-    expect(session[1]!.handle).toBe('h-tool-1');
+    // Rebuilt without handles so a resume neither multiplies nor orphans them (upstream #89, #129);
+    // the tool_use inside is still the engine's own object.
+    expect(session[1]!.handle).toBeUndefined();
+    expect(session[1]!.toolUses[0]).toBe(input[1]!.toolUses[0]);
     expect(session[2]!.handle).toBeUndefined();
   });
 

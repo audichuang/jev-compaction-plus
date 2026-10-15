@@ -89,7 +89,7 @@ describe('hook config', () => {
 });
 
 describe('session message mapping', () => {
-  it('returns the engine objects for untouched messages and handle-less copies for rebuilt ones', () => {
+  it('returns plain user messages as the engine objects and rebuilds every other message without a handle', () => {
     const messages = transcript();
     const calls = collectToolCalls(messages, 0);
     const decisions = [
@@ -110,11 +110,30 @@ describe('session message mapping', () => {
       new RegExp(`^${'x'.repeat(300)}\\n\\[fast-jev-compaction truncated 1700 chars`),
     );
     expect(out[2]?.toolResults?.[0]).toMatchObject({ tool_use_id: 'tool-1', isError: false });
-    expect(out[3]).toBe(messages[3]);
-    expect(out[4]).toBe(messages[4]);
+    expect(out[3]?.handle).toBeUndefined();
+    expect(out[3]?.toolUses[0]).toBe(messages[3]!.toolUses[0]);
+    expect(out[4]?.handle).toBeUndefined();
+    expect(out[4]?.toolResults?.[0]).toBe(messages[4]!.toolResults![0]);
+    expect(out[6]).toBe(messages[6]);
   });
 
-  it('preserves short dropped-result messages and their handles', () => {
+  it('rebuilds the parallel calls of one response as one message, results after it', () => {
+    const messages: SessionMessage[] = [
+      message('user', 'Read both.', { handle: 'h-0' }),
+      message('assistant', 'Reading.', { handle: 'h-a' }),
+      call('p1', 'Read', { file_path: 'a' }, 'A'),
+      call('p2', 'Read', { file_path: 'b' }, 'B'),
+      result('p1', 'A'),
+      result('p2', 'B'),
+    ];
+    const out = toSessionMessages(messages, messages);
+    expect(out.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'user']);
+    expect(out[1]).toMatchObject({ text: 'Reading.' });
+    expect(out[1]!.toolUses.map((t) => t.tool_use_id)).toEqual(['p1', 'p2']);
+    expect(out[1]!.handle).toBeUndefined();
+  });
+
+  it('rebuilds short dropped-result messages with their content unchanged', () => {
     const messages = transcript();
     messages[1]!.toolUses[0]!.text = 'y'.repeat(100);
     messages[2]!.toolResults![0]!.text = 'y'.repeat(100);
@@ -124,8 +143,8 @@ describe('session message mapping', () => {
       decideCall(calls[1]!, { keepCall: 0.9, keepResult: 0.9 }, { keepThreshold: 0.5 }),
     ];
     const out = toSessionMessages(messages, applyDecisions(messages, decisions, calls, 300));
-    expect(out[1]).toBe(messages[1]);
-    expect(out[2]).toBe(messages[2]);
+    expect(out[1]!.toolUses[0]).toBe(messages[1]!.toolUses[0]);
+    expect(out[2]!.toolResults![0]).toBe(messages[2]!.toolResults![0]);
   });
 });
 
@@ -142,7 +161,7 @@ describe('compactSession', () => {
     expect(bodies).toHaveLength(1);
     expect(JSON.parse(bodies[0]!).model).toBe('jev-x');
     expect(output.decisions.map((d) => d.action)).toEqual(['drop_call', 'keep']);
-    expect(messages.map((m) => m.handle)).toEqual(['h-0', 'h-tool-2', 'r-tool-2', 'h-5', 'h-6']);
+    expect(messages.map((m) => m.handle)).toEqual(['h-0', undefined, undefined, undefined, 'h-6']);
     expect(summarize(output)).toMatch(/^\d+% reduction; 1 kept, 1 call_dropped; state ~\d+ tokens \(full\) in 1 request\(s\)$/);
     expect(decisionLog(output)).toBe('t1:Read:drop_call/call=0.10/result=0.10 t2:Bash:keep/call=0.90/result=0.90');
     expect(decisionLogLines(output)).toEqual([`decisions: ${decisionLog(output)}`]);
@@ -171,6 +190,7 @@ describe('compactSession', () => {
 
 describe('registered hooks', () => {
   const event = (trigger: string) => ({ messages: transcript(), trigger });
+  const answer = { reason: 'answer' };
   const okFetch = jevFetch(() => 0);
   const invoke = (h: ReturnType<typeof fake$>, name: string, e: any, next = (x: any) => ({ next: x })) => h.handlers[name](h.$, e, next);
 
@@ -185,14 +205,22 @@ describe('registered hooks', () => {
     expect(await invoke(h, 'session.compact', event('plugin'))).toMatchObject({ skip: 'write failed' });
   });
 
-  it('does not compact subagents or overlapping turns', async () => {
+  it('leaves subagent and precompute compactions alone', async () => {
+    const h = fake$(); h.fetch = okFetch;
+    expect(await invoke(h, 'session.compact', { ...event('auto'), agentId: 'child' })).toHaveProperty('next');
+    expect(await invoke(h, 'session.compact', event('precompute'))).toEqual({ skip: 'jev-compaction-plus: no precompute' });
+    expect(h.writes).toEqual([]);
+  });
+
+  it('does not compact subagents, non-answer turns or overlapping turns', async () => {
     const h = fake$(); h.percent = 70;
-    await invoke(h, 'turn.complete', { agentId: 'child' });
+    await invoke(h, 'turn.complete', { agentId: 'child', reason: 'answer' });
+    await invoke(h, 'turn.complete', { reason: 'aborted' });
     let release!: () => void;
     h.$.session.usage = () => new Promise((resolve: any) => { release = () => resolve({ context: { percent: 70 } }); });
-    const first = invoke(h, 'turn.complete', {});
+    const first = invoke(h, 'turn.complete', answer);
     await Promise.resolve();
-    const second = invoke(h, 'turn.complete', {});
+    const second = invoke(h, 'turn.complete', answer);
     release();
     await Promise.all([first, second]);
     expect(h.compactCalls).toBe(1);
@@ -200,7 +228,7 @@ describe('registered hooks', () => {
 
   it('backs off five percentage points after a skip', async () => {
     const h = fake$();
-    for (const p of [61, 63, 66]) { h.percent = p; await invoke(h, 'turn.complete', {}); }
+    for (const p of [61, 63, 66]) { h.percent = p; await invoke(h, 'turn.complete', answer); }
     expect(h.compactCalls).toBe(2);
   });
 
@@ -214,7 +242,7 @@ describe('registered hooks', () => {
   it('compacts below five percent when the threshold is set that low', async () => {
     const h = fake$({ compactAtPercent: 1 });
     h.percent = 2;
-    await invoke(h, 'turn.complete', {});
+    await invoke(h, 'turn.complete', answer);
     expect(h.compactCalls).toBe(1);
   });
 

@@ -8,7 +8,7 @@ import type {
   TurnCompleteInput,
 } from 'claude-code';
 
-import { compact, DEFAULT_OPTIONS, reductionRatio, resolveOptions } from '../src/compact.js';
+import { compact, reductionRatio, resolveOptions } from '../src/compact.js';
 import { buildJevRequest, DEFAULT_MODEL, parseJevResponse } from '../src/request.js';
 import type {
   CompactOptions,
@@ -116,8 +116,15 @@ export function resolveEndpoint(
   return { model: config.model };
 }
 
-/** A relative drawer folder resolved against the session's directory, so labels hold absolute paths. */
-export function drawerPath(dir: string, cwd: string): string {
+/** Where the plugin keeps its drawer unless told otherwise: outside every project, so synced folders never get dumps. */
+export const HOOK_DRAWER_DIR = '~/.claude/jev-drawer';
+
+/**
+ * A drawer folder as an absolute path, so labels hold one: `~/` resolves against
+ * the home folder, any other relative folder against the session's directory.
+ */
+export function drawerPath(dir: string, cwd: string, home = ''): string {
+  if (home && /^~[\\/]/.test(dir)) return `${home.replace(/[\\/]+$/, '')}/${dir.slice(2)}`;
   if (!dir || /^([A-Za-z]:[\\/]|[\\/])/.test(dir)) return dir;
   return `${cwd.replace(/[\\/]+$/, '')}/${dir}`;
 }
@@ -419,7 +426,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const config = {
         ...configured,
         apiKey: await getApiKey($, configured),
-        drawerDir: drawerPath(configured.drawerDir ?? DEFAULT_OPTIONS.drawerDir, await $.session.cwd()),
+        drawerDir: drawerPath(
+          configured.drawerDir ?? HOOK_DRAWER_DIR,
+          await $.session.cwd(),
+          (await $.env.get('HOME')) ?? '',
+        ),
       };
       const { result, messages } = await compactSession(event.messages, config, async (url, init) => {
         const response = await $.http.fetch(url, init);

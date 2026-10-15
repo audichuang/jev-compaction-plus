@@ -63,6 +63,7 @@ function fake$(options: Record<string, unknown> = {}) {
   const $: any = {
     userConfig: { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1 },
     http: { fetch: (...args: any[]) => fetcher(...args) },
+    env: { get: async (name: string) => (name === 'HOME' ? '/home/me' : undefined) },
     fs: { exists: async () => false, write: async (path: string) => { if (writeFails) throw Error('write failed'); writes.push(path); } },
     ui: { log: (s: string) => logs.push(s), toast: () => {} },
     session: { cwd: async () => '/tmp', usage: async () => ({ context: { percent: percentUsed } }), compact: async () => { compactCalls++; return { skip: 'skip' }; } },

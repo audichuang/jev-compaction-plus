@@ -19,7 +19,7 @@
       "type": "number",
       "title": "Keep threshold",
       "description": "Minimum Jev probability that a tool call or tool result is still needed; below it the item is removed.",
-      "default": 0.2
+      "default": 0.5
     },
     "preserveRecentMessages": {
       "type": "number",
@@ -37,7 +37,7 @@
       "type": "number",
       "title": "Minimum reduction ratio",
       "description": "Minimum estimated character reduction required to replace history.",
-      "default": 0.25
+      "default": 0.55
     },
     "maxStateTokens": {
       "type": "number",
@@ -83,8 +83,8 @@
     "drawerDir": {
       "type": "string",
       "title": "Drawer folder",
-      "description": "Folder (relative to the project) where dropped results are saved, so Claude can read them back. Empty: delete them like fast-jev-compaction does.",
-      "default": ".jev-drawer"
+      "description": "Folder where dropped results are saved, so Claude can read them back. ~/ is the home folder; a relative path is resolved against the project. Empty: delete them like fast-jev-compaction does.",
+      "default": "~/.claude/jev-drawer"
     }
   }
 }

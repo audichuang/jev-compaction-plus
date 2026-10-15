@@ -16,9 +16,10 @@ import type {
 
 export const DEFAULT_OPTIONS: ResolvedCompactOptions = {
   goal: '',
-  // Jev's keepResult runs low (upstream #56: at 0.5 almost nothing is kept); with the
-  // drawer a wrong drop costs one file read, so err on keeping.
-  keepThreshold: 0.2,
+  // Jev's keepResult runs low (upstream #56), so most results go to the drawer. Keep
+  // 0.5: a wrong drop costs one file read, while a low threshold falls back to the
+  // built-in summary on short sessions.
+  keepThreshold: 0.5,
   preserveRecentMessages: 6,
   maxStateTokens: 14_000,
   maxRequestTokens: 30_000,

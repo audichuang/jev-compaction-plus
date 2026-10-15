@@ -149,6 +149,7 @@ describe('jev-compaction-plus: hook helpers', () => {
     expect(drawerPath('D:\\drawers', '/x')).toBe('D:\\drawers');
     expect(drawerPath('/tmp/d', '/x')).toBe('/tmp/d');
     expect(drawerPath('', '/x')).toBe('');
+    expect(drawerPath('~/.claude/jev-drawer', '/x', '/Users/me/')).toBe('/Users/me/.claude/jev-drawer');
   });
 
   it('sends OpenRouter keys to OpenRouter end to end', async () => {

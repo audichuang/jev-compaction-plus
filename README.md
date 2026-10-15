@@ -115,7 +115,7 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 
 | Option | Default | What it does |
 |---|---:|---|
-| `keepThreshold` | `0.2` | Jev's minimum "still needed" probability to keep a result. **Lower is more cautious.** |
+| `keepThreshold` | `0.5` | Jev's minimum "still needed" probability to keep a result. **Lower is more cautious.** |
 | `previewChars` | `600` | How much of each result Jev sees (start + end). |
 | `minDropChars` | `1500` | Results shorter than this are always kept. |
 | `drawerDir` | `.jev-drawer` | Where dropped results go, relative to the project. Empty = delete them like the original. |

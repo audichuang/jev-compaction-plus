@@ -1,5 +1,23 @@
 # jev-compaction-plus
 
+> **audichuang's fork** of [cth9191/jev-compaction-plus](https://github.com/cth9191/jev-compaction-plus)
+> (itself a fork of [tamaratran/fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction),
+> neither updated since early October 2026). On top of plus's drawer design it carries:
+>
+> | Fix | Source |
+> |---|---|
+> | Resume keeps the compacted history: kept tool-result and assistant rows are rebuilt without their `handle` (upstream #89, #145, #129) | [orangewk](https://github.com/orangewk/fast-jev-compaction) 911ae3f, 5dad087 |
+> | The kept calls of one response are rebuilt as one message, so parallel results are not replaced with "Tool result missing" (#137) | orangewk ad91a16, e1a77b5 |
+> | Subagent and precompute compactions go to the built-in summary; only answered turns trigger auto-compaction | orangewk 99c5823 |
+> | A failed plugin-triggered compaction skips instead of running the Opus summary at 60%; subagent turns ignored; drawer `.gitignore` written first, unique folders | [Agreor](https://github.com/Agreor/jev-compaction-plus) #1–#4 |
+> | Text cuts never split a surrogate pair; the request body escapes any lone one (#128) | orangewk a4c8fcd (dhruv1220) |
+> | Drawer defaults to `~/.claude/jev-drawer`, outside every project; toast reports drawer-moved calls as moved results | this fork |
+>
+> Costs, by design: kept messages are rebuilt, so their thinking blocks, images and attached rows
+> (queued mid-turn prompts among them, upstream #133) are lost at compaction. The drawer is never pruned.
+>
+> Install: `claude plugin marketplace add audichuang/jev-compaction-plus && claude plugin install jev-compaction-plus@jev-compaction-plus`
+
 **Claude Code compaction in about half a second instead of about 35.**
 
 When a Claude Code session fills up, `/compact` makes Opus stop, re-read the whole

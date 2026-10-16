@@ -79,6 +79,31 @@ function abridge(text: string, head: number, tail: number): string {
   return `${sliceSurrogateSafe(text, 0, head)}\n[… ${omitted} chars omitted …]\n${sliceSurrogateSafe(text, text.length - tail, text.length)}`;
 }
 
+/**
+ * Prefixes of user-role text the host writes rather than the user: task and
+ * command notices, injected reminders, loaded skill bodies. All re-derivable,
+ * so a compaction may move them to the drawer. A previous compaction's
+ * summary and pasted content are not here: they are the only copy.
+ * (Prefix list after orangewk/fast-jev-compaction's isMachineText.)
+ */
+const HOST_TEXT_PREFIXES = [
+  '<task-notification>',
+  '<system-reminder>',
+  '<command-name>',
+  '<command-message>',
+  '<local-command-',
+  '<bash-input>',
+  '<bash-stdout>',
+  '<bash-stderr>',
+  'Base directory for this skill',
+] as const;
+
+/** Whether a user-role text was written by the host, not typed or pasted by the user. */
+export function isHostText(text: string): boolean {
+  const head = text.trimStart();
+  return HOST_TEXT_PREFIXES.some((prefix) => head.startsWith(prefix));
+}
+
 export function isPinned(
   index: number,
   total: number,

@@ -161,3 +161,46 @@ describe('jev-compaction-plus: hook helpers', () => {
     expect(JSON.parse(bodies[0]!).model).toBe(OPENROUTER_MODEL);
   });
 });
+
+describe('this fork: long input fields move to the drawer', () => {
+  it('keeps a head of a long Write content, moves the rest, and leaves short fields and pinned calls alone', async () => {
+    const content = 'x'.repeat(5000);
+    const input: SessionMessage[] = [
+      message('user', 'Write the file.', { handle: 'h-0' }),
+      call('w1', 'Write', { file_path: 'out.txt', content }, 'File created'),
+      result('w1', 'File created'),
+      call('w2', 'Write', { file_path: 'pinned.txt', content }, 'File created'),
+      result('w2', 'File created'),
+    ];
+    const out = await compact(input, jev(() => 0.9), { preserveRecentMessages: 2, drawerDir: '/d' });
+    const moved = out.messages[1]!.toolUses[0]!.input as Record<string, string>;
+    expect(moved['file_path']).toBe('out.txt');
+    expect(moved['content']).toMatch(new RegExp(`^${'x'.repeat(300)}\\n\\[Jev compaction moved the rest of this 5000-char content to /d/.+-Write-content\\.txt\\.`));
+    expect(out.drawer.some((file) => file.path.endsWith('-Write-content.txt') && file.text === content)).toBe(true);
+    expect(out.messages[3]!.toolUses[0]!.input).toEqual({ file_path: 'pinned.txt', content });
+    expect(out.messages[2]).toBe(input[2]);
+    expect(out.stats.charsAfter).toBeLessThan(out.stats.charsBefore - 4000);
+  });
+});
+
+describe('this fork: host-written user text moves to the drawer', () => {
+  it('moves old skill bodies and task notifications, never typed or pasted text', async () => {
+    const skill = `Base directory for this skill: /s\n${'rule\n'.repeat(800)}`;
+    const notice = `<task-notification>${'out\n'.repeat(800)}</task-notification>`;
+    const typed = 'please '.repeat(800);
+    const input: SessionMessage[] = [
+      message('user', 'Start.', { handle: 'h-0' }),
+      message('user', skill, { handle: 'h-1' }),
+      message('user', notice, { handle: 'h-2' }),
+      message('user', typed, { handle: 'h-3' }),
+      message('assistant', 'ok', { handle: 'h-4' }),
+      message('user', notice, { handle: 'h-5' }),
+    ];
+    const out = await compact(input, jev(() => 0), { preserveRecentMessages: 1, drawerDir: '/d' });
+    expect(out.messages[1]!.text).toMatch(/^Base directory for this skill[\s\S]*\[Jev compaction moved the rest of this \d+-char host notice to \/d\/.+-host-text\.txt\./);
+    expect(out.messages[2]!.text).toMatch(/host notice/);
+    expect(out.messages[3]).toBe(input[3]);
+    expect(out.messages[5]).toBe(input[5]);
+    expect(out.drawer.filter((file) => file.path.endsWith('-host-text.txt')).map((file) => file.text)).toEqual([skill, notice]);
+  });
+});

@@ -11,7 +11,8 @@
 > | Subagent and precompute compactions go to the built-in summary; only answered turns trigger auto-compaction | orangewk 99c5823 |
 > | A failed plugin-triggered compaction skips instead of running the Opus summary at 60%; subagent turns ignored; drawer `.gitignore` written first, unique folders | [Agreor](https://github.com/Agreor/jev-compaction-plus) #1–#4 |
 > | Text cuts never split a surrogate pair; the request body escapes any lone one (#128) | orangewk a4c8fcd (dhruv1220) |
-> | Drawer defaults to `~/.claude/jev-drawer`, outside every project; toast reports drawer-moved calls as moved results | this fork |
+> | Long tool-input fields (Write content, Bash heredocs, Agent prompts) and host-written user text (skill bodies, task notifications, reminders) keep a head and move to the drawer by rule; typed and pasted text is never touched. On 10 real sessions this took the first compaction from 13–61% (5 of 10 falling back to the Opus summary) to 49–76% | this fork |
+> | Drawer defaults to `~/.claude/jev-drawer`, outside every project; `keepThreshold` 0.6 from replayed real sessions; toast reports drawer-moved calls as moved results | this fork |
 >
 > Costs, by design: kept messages are rebuilt, so their thinking blocks, images and attached rows
 > (queued mid-turn prompts among them, upstream #133) are lost at compaction. The drawer is never pruned.
@@ -133,7 +134,7 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 
 | Option | Default | What it does |
 |---|---:|---|
-| `keepThreshold` | `0.5` | Jev's minimum "still needed" probability to keep a result. **Lower is more cautious.** |
+| `keepThreshold` | `0.6` | Jev's minimum "still needed" probability to keep a result. **Lower is more cautious.** |
 | `previewChars` | `600` | How much of each result Jev sees (start + end). |
 | `minDropChars` | `1500` | Results shorter than this are always kept. |
 | `drawerDir` | `.jev-drawer` | Where dropped results go, relative to the project. Empty = delete them like the original. |

@@ -4,7 +4,7 @@
  * would send next: every tool_use answered in the user turn right after it.
  * Prints the keepResult distribution, the calibration input for keepThreshold.
  *
- *   TYPESAFE_API_KEY=... [KEEP=0.5] npx tsx scripts/replay.mts <session.jsonl>...
+ *   TYPESAFE_API_KEY=... [KEEP=0.6] npx tsx scripts/replay.mts <session.jsonl>...
  *
  * Sends the transcript to Jev, as the plugin itself does on /compact.
  */
@@ -38,7 +38,8 @@ function toMessages(rows: Row[]): Message[] {
   const messages: Message[] = [];
   for (const row of rows) {
     const type = row['type'];
-    if ((type !== 'user' && type !== 'assistant') || row['isSidechain']) continue;
+    // isMeta rows (loaded skill bodies) never reach the hook: the host keeps them out of session.compact.
+    if ((type !== 'user' && type !== 'assistant') || row['isSidechain'] || row['isMeta']) continue;
     const content = (row['message'] as { content?: unknown } | undefined)?.content;
     if (typeof content === 'string') {
       messages.push({ role: type, text: content, toolUses: [] });
@@ -99,7 +100,7 @@ for (const file of process.argv.slice(2)) {
   }
   try {
     const before = unpaired(messages).length;
-    const result = await compact(messages, asker, { drawerDir: '/tmp/replay-drawer', keepThreshold: Number(process.env['KEEP'] ?? 0.5) });
+    const result = await compact(messages, asker, { drawerDir: '/tmp/replay-drawer', ...(process.env['KEEP'] ? { keepThreshold: Number(process.env['KEEP']) } : {}) });
     const out = toSessionMessages(messages, result.messages);
     const { stats } = result;
     const scored = result.decisions.filter((d) => d.reason !== 'pinned' && d.reason !== 'small');

@@ -27,12 +27,6 @@
       "description": "Number of newest messages pinned from compaction.",
       "default": 6
     },
-    "compactAtPercent": {
-      "type": "number",
-      "title": "Compaction percentage",
-      "description": "Context percentage at which turn.complete requests compaction.",
-      "default": 60
-    },
     "minReductionRatio": {
       "type": "number",
       "title": "Minimum reduction ratio",

@@ -204,3 +204,17 @@ describe('this fork: host-written user text moves to the drawer', () => {
     expect(out.drawer.filter((file) => file.path.endsWith('-host-text.txt')).map((file) => file.text)).toEqual([skill, notice]);
   });
 });
+
+describe('this fork: drawer mode asks less', () => {
+  it('asks only the result question, and never about small results', async () => {
+    const asked: string[] = [];
+    const asker: JevAsker = {
+      async ask(_state, questions) {
+        asked.push(...Object.keys(questions));
+        return { answers: Object.fromEntries(Object.keys(questions).map((k) => [k, { type: 'noul', noul: 0 }])) };
+      },
+    };
+    await compact(transcript(), asker, { preserveRecentMessages: 1, drawerDir: '/d' });
+    expect(asked).toEqual(['result_t1']);
+  });
+});

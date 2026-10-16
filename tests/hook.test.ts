@@ -56,34 +56,32 @@ function fake$(options: Record<string, unknown> = {}) {
   const handlers: Record<string, (...args: any[]) => any> = {};
   const writes: string[] = [];
   const logs: string[] = [];
-  let compactCalls = 0;
-  let percentUsed = 0;
   let fetcher: any = async () => ({ status: 500, ok: false, text: 'error' });
   let writeFails = false;
   const $: any = {
     userConfig: { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1 },
     http: { fetch: (...args: any[]) => fetcher(...args) },
     env: { get: async (name: string) => (name === 'HOME' ? '/home/me' : undefined) },
+    clock: { sleep: (ms: number) => (ms > 0 ? new Promise<void>(() => {}) : Promise.resolve()) },
     fs: { exists: async () => false, write: async (path: string) => { if (writeFails) throw Error('write failed'); writes.push(path); } },
     ui: { log: (s: string) => logs.push(s), toast: () => {} },
-    session: { cwd: async () => '/tmp', usage: async () => ({ context: { percent: percentUsed } }), compact: async () => { compactCalls++; return { skip: 'skip' }; } },
+    session: { cwd: async () => '/tmp' },
   };
   register((name: string, handler: any) => { handlers[name] = handler; }, { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1, ...options } as any);
-  return { $, handlers, writes, logs, get compactCalls() { return compactCalls; }, set percent(p: number) { percentUsed = p; }, set fetch(f: any) { fetcher = f; }, set writeFails(v: boolean) { writeFails = v; } };
+  return { $, handlers, writes, logs, set fetch(f: any) { fetcher = f; }, set writeFails(v: boolean) { writeFails = v; } };
 }
 
 describe('hook config', () => {
   it('reads userConfig values and falls back to defaults', () => {
-    expect(resolveHookConfig({})).toEqual({ compactAtPercent: 60, minReductionRatio: 0.25, model: 'jev-latest' });
+    expect(resolveHookConfig({})).toEqual({ minReductionRatio: 0.25, model: 'jev-latest' });
     expect(
-      resolveHookConfig({ apiKey: 'k', keepThreshold: 0.3, maxStateTokens: 1000, model: 'jev-x', goal: 'g', compactAtPercent: 'no' }),
+      resolveHookConfig({ apiKey: 'k', keepThreshold: 0.3, maxStateTokens: 1000, model: 'jev-x', goal: 'g', minReductionRatio: 'no' }),
     ).toEqual({
       apiKey: 'k',
       keepThreshold: 0.3,
       maxStateTokens: 1000,
       model: 'jev-x',
       goal: 'g',
-      compactAtPercent: 60,
       minReductionRatio: 0.25,
     });
   });
@@ -181,7 +179,7 @@ describe('compactSession', () => {
   });
 
   it('throws on a missing key and on failed requests so the hook falls back', async () => {
-    const config = resolveHookConfig({ preserveRecentMessages: 1 });
+    const config = { ...resolveHookConfig({ preserveRecentMessages: 1 }), minDropChars: 0 };
     await expect(compactSession(transcript(), config, jevFetch(() => 0))).rejects.toThrow(/TYPESAFE_API_KEY/);
     await expect(
       compactSession(transcript(), { ...config, apiKey: 'k' }, async () => ({ status: 500, ok: false, text: 'x' })),
@@ -191,7 +189,6 @@ describe('compactSession', () => {
 
 describe('registered hooks', () => {
   const event = (trigger: string) => ({ messages: transcript(), trigger });
-  const answer = { reason: 'answer' };
   const okFetch = jevFetch(() => 0);
   const invoke = (h: ReturnType<typeof fake$>, name: string, e: any, next = (x: any) => ({ next: x })) => h.handlers[name](h.$, e, next);
 
@@ -213,26 +210,6 @@ describe('registered hooks', () => {
     expect(h.writes).toEqual([]);
   });
 
-  it('does not compact subagents, non-answer turns or overlapping turns', async () => {
-    const h = fake$(); h.percent = 70;
-    await invoke(h, 'turn.complete', { agentId: 'child', reason: 'answer' });
-    await invoke(h, 'turn.complete', { reason: 'aborted' });
-    let release!: () => void;
-    h.$.session.usage = () => new Promise((resolve: any) => { release = () => resolve({ context: { percent: 70 } }); });
-    const first = invoke(h, 'turn.complete', answer);
-    await Promise.resolve();
-    const second = invoke(h, 'turn.complete', answer);
-    release();
-    await Promise.all([first, second]);
-    expect(h.compactCalls).toBe(1);
-  });
-
-  it('backs off five percentage points after a skip', async () => {
-    const h = fake$();
-    for (const p of [61, 63, 66]) { h.percent = p; await invoke(h, 'turn.complete', answer); }
-    expect(h.compactCalls).toBe(2);
-  });
-
   it('says a skipped plugin compaction left the conversation unchanged', async () => {
     const h = fake$();
     await invoke(h, 'session.compact', event('plugin'));
@@ -240,17 +217,40 @@ describe('registered hooks', () => {
     expect(h.logs.some((line: string) => line.startsWith('fallback'))).toBe(false);
   });
 
-  it('compacts below five percent when the threshold is set that low', async () => {
-    const h = fake$({ compactAtPercent: 1 });
-    h.percent = 2;
-    await invoke(h, 'turn.complete', answer);
-    expect(h.compactCalls).toBe(1);
-  });
-
   it('preserves an existing drawer gitignore', async () => {
     const h = fake$(); h.fetch = okFetch;
     h.$.fs.exists = async (path: string) => path.endsWith('/.gitignore');
     await invoke(h, 'session.compact', event('manual'));
     expect(h.writes.some((path: string) => path.endsWith('/.gitignore'))).toBe(false);
+  });
+});
+
+describe('goal', () => {
+  it('leaves host-written text out and carries /compact instructions to Jev', async () => {
+    const bodies: string[] = [];
+    const h = fake$(); h.fetch = jevFetch(() => 0.9, bodies);
+    const messages = [...transcript(), message('user', '<task-notification>done</task-notification>')];
+    await h.handlers['session.compact'](h.$, { messages, trigger: 'manual', instructions: 'keep the auth plan' }, (x: any) => x);
+    const goal = JSON.parse(bodies[0]!).state.goal as string;
+    expect(goal).toContain('go ahead');
+    expect(goal).not.toContain('task-notification');
+    expect(goal).toMatch(/Compaction instructions: keep the auth plan$/);
+  });
+});
+
+describe('Jev deadline', () => {
+  it('falls back when Jev never answers', async () => {
+    const h = fake$(); h.fetch = () => new Promise(() => {});
+    h.$.clock.sleep = async () => {};
+    const out = await h.handlers['session.compact'](h.$, { messages: transcript(), trigger: 'manual' }, (x: any) => ({ next: x }));
+    expect(out).toHaveProperty('next');
+    expect(h.logs.some((line: string) => /did not answer within 30 s/.test(line))).toBe(true);
+  });
+
+  it('keeps a finished compaction when the notice throws', async () => {
+    const h = fake$(); h.fetch = jevFetch(() => 0);
+    h.$.ui.toast = () => { throw new Error('no toast'); };
+    const out = await h.handlers['session.compact'](h.$, { messages: transcript(), trigger: 'manual' }, (x: any) => ({ next: x }));
+    expect(out).toHaveProperty('messages');
   });
 });

@@ -61,16 +61,25 @@ export function resolveOptions(options: CompactOptions = {}): ResolvedCompactOpt
   };
 }
 
-/** The two `noul` questions asked about one call: keep the call, keep its result. */
-export function questionsFor(call: ToolCall): JevQuestions {
+/**
+ * The `noul` questions asked about one call: keep the call, keep its result. With
+ * the drawer every call stays, so only the result question is asked.
+ */
+export function questionsFor(call: ToolCall, resultOnly = false): JevQuestions {
+  return {
+    ...(resultOnly ? {} : callQuestion(call)),
+    [`result_${call.id}`]: {
+      type: 'noul',
+      instructions: `The full output of tool call ${call.id} (${call.tool}, ${call.resultChars} chars) should stay in the history verbatim: the assistant may still need its contents. Preview of the output:\n"""\n${call.resultPreview}\n"""`,
+    },
+  };
+}
+
+function callQuestion(call: ToolCall): JevQuestions {
   return {
     [`call_${call.id}`]: {
       type: 'noul',
       instructions: `Tool call ${call.id} (${call.tool}) should stay in the history: knowing this call was made, with its input, still matters for what the assistant does next`,
-    },
-    [`result_${call.id}`]: {
-      type: 'noul',
-      instructions: `The full output of tool call ${call.id} (${call.tool}, ${call.resultChars} chars) should stay in the history verbatim: the assistant may still need its contents. Preview of the output:\n"""\n${call.resultPreview}\n"""`,
     },
   };
 }
@@ -83,13 +92,14 @@ export function batchCalls(
   calls: readonly ToolCall[],
   stateTokens: number,
   options: Pick<ResolvedCompactOptions, 'maxRequestTokens'>,
+  resultOnly = false,
 ): ToolCall[][] {
   const budget = options.maxRequestTokens - stateTokens - REQUEST_OVERHEAD_TOKENS;
   const batches: ToolCall[][] = [];
   let current: ToolCall[] = [];
   let currentTokens = 0;
   for (const call of calls) {
-    const tokens = estimateTokens(JSON.stringify(questionsFor(call)));
+    const tokens = estimateTokens(JSON.stringify(questionsFor(call, resultOnly)));
     if (current.length > 0 && currentTokens + tokens > budget) {
       batches.push(current);
       current = [];
@@ -130,17 +140,15 @@ async function askBatch(
   asker: JevAsker,
   state: CompactionState,
   batch: readonly ToolCall[],
+  resultOnly: boolean,
 ): Promise<Map<string, CallAnswer>> {
-  const questions: JevQuestions = Object.assign({}, ...batch.map(questionsFor));
+  const questions: JevQuestions = Object.assign({}, ...batch.map((call) => questionsFor(call, resultOnly)));
   const { answers } = await asker.ask(state, questions);
   return new Map(
-    batch.map((call) => [
-      call.id,
-      {
-        keepCall: noulAnswer(answers, `call_${call.id}`),
-        keepResult: noulAnswer(answers, `result_${call.id}`),
-      },
-    ]),
+    batch.map((call) => {
+      const keepResult = noulAnswer(answers, `result_${call.id}`);
+      return [call.id, { keepCall: resultOnly ? keepResult : noulAnswer(answers, `call_${call.id}`), keepResult }];
+    }),
   );
 }
 
@@ -378,7 +386,9 @@ export async function compact(
   const started = Date.now();
   const resolved = resolveOptions(options);
   const calls = collectToolCalls(messages, resolved.preserveRecentMessages, resolved.previewChars);
-  const candidates = calls.filter((call) => !call.pinned);
+  // Pinned calls and small results stay whatever Jev says, so they are not asked about.
+  const candidates = calls.filter((call) => !call.pinned && call.resultChars >= resolved.minDropChars);
+  const resultOnly = resolved.drawerDir.length > 0;
   const charsBefore = messages.reduce((sum, message) => sum + messageChars(message), 0);
 
   let fitted: { tokens: number; stage: string } = { tokens: 0, stage: '' };
@@ -387,9 +397,9 @@ export async function compact(
   if (candidates.length > 0) {
     const state = fitState(messages, calls, resolved);
     fitted = state;
-    batches = batchCalls(candidates, state.tokens, resolved);
+    batches = batchCalls(candidates, state.tokens, resolved, resultOnly);
     const answered = await Promise.all(
-      batches.map((batch) => askBatch(asker, state.state, batch)),
+      batches.map((batch) => askBatch(asker, state.state, batch, resultOnly)),
     );
     for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
   }

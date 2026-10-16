@@ -5,11 +5,12 @@ import type {
   SessionMessage,
   ToolResultSummary,
   ToolUseSummary,
-  TurnCompleteInput,
 } from 'claude-code';
 
 import { compact, reductionRatio, resolveOptions } from '../src/compact.js';
 import { buildJevRequest, DEFAULT_MODEL, parseJevResponse } from '../src/request.js';
+import { redactDeep } from '../src/redact.js';
+import { goalFromMessages } from '../src/state.js';
 import type {
   CompactOptions,
   CompactResult,
@@ -20,7 +21,6 @@ import type {
 } from '../src/types.js';
 
 const HOOK_DEFAULTS = {
-  compactAtPercent: 60,
   minReductionRatio: 0.25,
   model: DEFAULT_MODEL,
 };
@@ -42,7 +42,6 @@ export type HookFetch = (url: string, init?: HookFetchInit) => Promise<HookFetch
 
 export type HookConfig = CompactOptions & {
   apiKey?: string;
-  compactAtPercent: number;
   minReductionRatio: number;
   model: string;
   /** Alternate Jev endpoint. Unset: TypeSafe's own API, or OpenRouter's when the key is an OpenRouter key. */
@@ -76,7 +75,6 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   }
   const config: HookConfig = {
     ...numbers,
-    compactAtPercent: optionNumber(options, 'compactAtPercent', HOOK_DEFAULTS.compactAtPercent),
     minReductionRatio: optionNumber(
       options,
       'minReductionRatio',
@@ -133,7 +131,13 @@ export function drawerPath(dir: string, cwd: string, home = ''): string {
 export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string, baseUrl?: string): JevAsker {
   return {
     async ask(state, questions) {
-      const request = buildJevRequest({ apiKey, model, baseUrl }, state, questions);
+      // Credential-shaped text in history, inputs and result previews never leaves the
+      // machine (upstream #98, socialadsmentor's redact.ts); the transcript is unchanged.
+      const request = buildJevRequest(
+        { apiKey, model, baseUrl },
+        redactDeep(state, [apiKey]).value,
+        redactDeep(questions, [apiKey]).value,
+      );
       const response = await fetchFn(request.url, {
         method: request.method,
         headers: request.headers,
@@ -408,14 +412,20 @@ function notify(
   },
   text: string,
 ): void {
-  $.ui.log(text);
-  $.ui.toast(text, { timeoutMs: 15_000 });
+  // A failing notice must not turn a finished compaction into a fallback (upstream #36).
+  try {
+    $.ui.log(text);
+    $.ui.toast(text, { timeoutMs: 15_000 });
+  } catch {
+    /* the outcome stands without its notice */
+  }
 }
+
+/** How long a compaction waits for Jev before falling back: the host's fetch has no timeout (upstream #117). */
+const JEV_DEADLINE_MS = 30_000;
 
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
-  let compacting = false;
-  let lastSkipPercent = -Infinity;
 
   on('session.compact', async ($, event, next) => {
     // A subagent's or fork's own transcript goes to the built-in summary: a resumed
@@ -425,6 +435,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
     try {
       const config = {
         ...configured,
+        // `/compact <instructions>` reaches Jev as part of the goal (upstream #39, #50).
+        ...(event.instructions
+          ? { goal: `${configured.goal || goalFromMessages(event.messages)}\nCompaction instructions: ${event.instructions}` }
+          : {}),
         apiKey: await getApiKey($, configured),
         drawerDir: drawerPath(
           configured.drawerDir ?? HOOK_DRAWER_DIR,
@@ -432,11 +446,20 @@ export const register: Register = (on: On, options: PluginOptions) => {
           (await $.env.get('HOME')) ?? '',
         ),
       };
-      const { result, messages } = await compactSession(event.messages, config, async (url, init) => {
-        const response = await $.http.fetch(url, init);
-        return { status: response.status, ok: response.ok, text: response.text };
-      });
-      for (const line of decisionLogLines(result)) $.ui.log(line);
+      const { result, messages } = await Promise.race([
+        compactSession(event.messages, config, async (url, init) => {
+          const response = await $.http.fetch(url, init);
+          return { status: response.status, ok: response.ok, text: response.text };
+        }),
+        $.clock.sleep(JEV_DEADLINE_MS, { signal: next.signal }).then((): never => {
+          throw new Error(`Jev did not answer within ${JEV_DEADLINE_MS / 1000} s`);
+        }),
+      ]);
+      try {
+        for (const line of decisionLogLines(result)) $.ui.log(line);
+      } catch {
+        /* diagnostics only */
+      }
       const ratio = reductionRatio(result);
       if (ratio >= config.minReductionRatio) {
         // jev-compaction-plus: write the drawer first; if that fails, nothing is dropped
@@ -465,28 +488,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
       );
       return event.trigger === 'plugin' ? { skip: error instanceof Error ? error.message : String(error) } : next(event);
     }
-  });
-
-  on('turn.complete', async ($, event: TurnCompleteInput, next) => {
-    if (compacting || event.agentId || event.reason !== 'answer') return next(event);
-    compacting = true;
-    try {
-      const { context } = await $.session.usage();
-      const percentUsed = context.percent ?? 0;
-      if (percentUsed < configured.compactAtPercent || percentUsed < lastSkipPercent + 5) return next(event);
-      const result = await $.session.compact();
-      if (result && 'skip' in result) {
-        lastSkipPercent = percentUsed;
-        // ponytail: fixed +5-point backoff; make it an option if 5 proves wrong
-      }
-    } catch (error) {
-      $.ui.log(
-        `auto-compact skipped (${error instanceof Error ? error.message : String(error)})`,
-      );
-    } finally {
-      compacting = false;
-    }
-    return next(event);
   });
 };
 

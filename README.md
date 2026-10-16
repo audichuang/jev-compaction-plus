@@ -8,8 +8,8 @@
 > |---|---|
 > | Resume keeps the compacted history: kept tool-result and assistant rows are rebuilt without their `handle` (upstream #89, #145, #129) | [orangewk](https://github.com/orangewk/fast-jev-compaction) 911ae3f, 5dad087 |
 > | The kept calls of one response are rebuilt as one message, so parallel results are not replaced with "Tool result missing" (#137) | orangewk ad91a16, e1a77b5 |
-> | Subagent and precompute compactions go to the built-in summary; only answered turns trigger auto-compaction | orangewk 99c5823 |
-> | A failed plugin-triggered compaction skips instead of running the Opus summary at 60%; subagent turns ignored; drawer `.gitignore` written first, unique folders | [Agreor](https://github.com/Agreor/jev-compaction-plus) #1–#4 |
+> | Subagent and precompute compactions go to the built-in summary | orangewk 99c5823 |
+> | A failed plugin-triggered compaction skips instead of running the Opus summary; drawer `.gitignore` written first, unique folders | [Agreor](https://github.com/Agreor/jev-compaction-plus) #1–#4 |
 > | Text cuts never split a surrogate pair; the request body escapes any lone one (#128) | orangewk a4c8fcd (dhruv1220) |
 > | Long tool-input fields (Write content, Bash heredocs, Agent prompts) and host-written user text (skill bodies, task notifications, reminders) keep a head and move to the drawer by rule; typed and pasted text is never touched. On 10 real sessions this took the first compaction from 13–61% (5 of 10 falling back to the Opus summary) to 49–76% | this fork |
 > | Drawer defaults to `~/.claude/jev-drawer`, outside every project; `keepThreshold` 0.6 from replayed real sessions; toast reports drawer-moved calls as moved results | this fork |
@@ -57,7 +57,7 @@ These numbers come from one session and one quiz, so treat them as an example, n
 ## How it works
 
 ```
-/compact (or auto-compact at 60% context)
+/compact (or Claude Code's own auto-compaction)
       │
       ▼
 Jev gets the conversation (texts + tool calls) and, for every old tool result,
@@ -139,7 +139,6 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 | `minDropChars` | `1500` | Results shorter than this are always kept. |
 | `drawerDir` | `.jev-drawer` | Where dropped results go, relative to the project. Empty = delete them like the original. |
 | `preserveRecentMessages` | `6` | Newest messages never touched. |
-| `compactAtPercent` | `60` | Context % at which the plugin starts a compaction itself. |
 | `minReductionRatio` | `0.25` | Below this cut, use the built-in summary instead. |
 | `maxStateTokens` | `14000` | Budget for the conversation view sent with every Jev request. |
 | `maxRequestTokens` | `30000` | Budget per Jev request (Jev's limit is 32k). |

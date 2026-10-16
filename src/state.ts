@@ -242,7 +242,8 @@ export function goalFromMessages(messages: readonly Message[]): string {
       (message) =>
         message.role === 'user' &&
         message.text.trim().length > 0 &&
-        (message.toolResults ?? []).length === 0,
+        (message.toolResults ?? []).length === 0 &&
+        !isHostText(message.text),
     )
     .slice(-3)
     .map((message) => truncate(message.text, 500))

@@ -10,6 +10,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { JevClient } from '../src/client.js';
+import { redactDeep } from '../src/redact.js';
 import { compact, reductionRatio } from '../src/compact.js';
 import type { Message, ToolResult, ToolUse } from '../src/types.js';
 import { toSessionMessages } from '../hooks/fast-jev.ts';
@@ -90,7 +91,17 @@ function quantiles(values: number[]): string {
   return `p10 ${at(0.1)} p50 ${at(0.5)} p90 ${at(0.9)} max ${at(0.999)}`;
 }
 
-const asker = new JevClient();
+const client = new JevClient();
+let redacted = 0;
+// Same redaction the hook's jevAsker applies, so the replay sends what the plugin sends.
+const asker = {
+  ask: (state: Parameters<JevClient['ask']>[0], questions: Parameters<JevClient['ask']>[1]) => {
+    const s = redactDeep(state);
+    const q = redactDeep(questions);
+    redacted += s.count + q.count;
+    return client.ask(s.value, q.value);
+  },
+};
 for (const file of process.argv.slice(2)) {
   const messages = toMessages(firstRound(file));
   const name = file.split('/').pop()!.slice(0, 8);
@@ -100,6 +111,7 @@ for (const file of process.argv.slice(2)) {
   }
   try {
     const before = unpaired(messages).length;
+    redacted = 0;
     const result = await compact(messages, asker, { drawerDir: '/tmp/replay-drawer', ...(process.env['KEEP'] ? { keepThreshold: Number(process.env['KEEP']) } : {}) });
     const out = toSessionMessages(messages, result.messages);
     const { stats } = result;
@@ -114,6 +126,7 @@ for (const file of process.argv.slice(2)) {
         `keepResult ${quantiles(scored.map((d) => d.keepResult))}`,
         `stage ${stats.stateStage} ×${stats.requests}`,
         `unpaired ${before}→${unpaired(out).length}`,
+        `redacted ${redacted}`,
       ].join(' | '),
     );
   } catch (error) {

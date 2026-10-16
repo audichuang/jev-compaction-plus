@@ -1,6 +1,6 @@
 {
   "name": "jev-compaction-plus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fast, verbatim context compaction for Claude Code using TypeSafe's Jev, with a drawer for everything it drops.",
   "type": "module",
   "license": "MIT",

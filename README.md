@@ -13,9 +13,13 @@
 > | Text cuts never split a surrogate pair; the request body escapes any lone one (#128) | orangewk a4c8fcd (dhruv1220) |
 > | Long tool-input fields (Write content, Bash heredocs, Agent prompts) and host-written user text (skill bodies, task notifications, reminders) keep a head and move to the drawer by rule; typed and pasted text is never touched. On 10 real sessions this took the first compaction from 13–61% (5 of 10 falling back to the Opus summary) to 49–76% | this fork |
 > | Drawer defaults to `~/.claude/jev-drawer`, outside every project; `keepThreshold` 0.6 from replayed real sessions; toast reports drawer-moved calls as moved results | this fork |
+> | Credential-shaped text (keys, tokens, `NAME=value` secrets, private keys) is redacted from every Jev request, previews included; the transcript is unchanged (upstream #98) | [socialadsmentor](https://github.com/socialadsmentor/fast-jev-compaction) `redact.ts` |
+> | Only the result question is asked (every call stays with the drawer), small and pinned results are not asked about; the default goal leaves host text out and `/compact <instructions>` reaches Jev; a 30 s deadline on the Jev round | this fork, after upstream #39/#50/#78/#117 |
+> | The plugin's own 60% auto-trigger is removed: the host refuses `$.session.compact` while a turn runs, so it never fired; Claude Code's auto-compaction goes through this hook anyway | this fork |
 >
 > Costs, by design: kept messages are rebuilt, so their thinking blocks, images and attached rows
 > (queued mid-turn prompts among them, upstream #133) are lost at compaction. The drawer is never pruned.
+> Loaded skill bodies never reach the hook (the host keeps `isMeta` rows out of `session.compact`).
 >
 > Install: `claude plugin marketplace add audichuang/jev-compaction-plus && claude plugin install jev-compaction-plus@jev-compaction-plus`
 
@@ -66,7 +70,7 @@ a yes/no question that quotes a preview of that result:
       │
       ├─ yes ............................ result stays, word for word
       ├─ no, but it's tiny (<1,500 chars) result stays (dropping it saves nothing)
-      └─ no ............................. result moves to .jev-drawer/<time>/t12-Read.txt;
+      └─ no ............................. result moves to ~/.claude/jev-drawer/<time>/t12-Read.txt;
                                           the session keeps the call plus a one-line label:
                                           [Jev compaction moved this 48213-char output to
                                            …/.jev-drawer/…/t12-Read.txt. Read that file if
@@ -137,7 +141,7 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 | `keepThreshold` | `0.6` | Jev's minimum "still needed" probability to keep a result. **Lower is more cautious.** |
 | `previewChars` | `600` | How much of each result Jev sees (start + end). |
 | `minDropChars` | `1500` | Results shorter than this are always kept. |
-| `drawerDir` | `.jev-drawer` | Where dropped results go, relative to the project. Empty = delete them like the original. |
+| `drawerDir` | `~/.claude/jev-drawer` | Where dropped results go; `~/` is the home folder, a relative path is resolved against the project. Empty = delete them like the original. |
 | `preserveRecentMessages` | `6` | Newest messages never touched. |
 | `minReductionRatio` | `0.25` | Below this cut, use the built-in summary instead. |
 | `maxStateTokens` | `14000` | Budget for the conversation view sent with every Jev request. |
@@ -154,7 +158,7 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 - **It leaves more behind than a summary does:** ~26k vs ~16k tokens in the test above. That's still a 96% cut, but you'll reach the next compaction a little sooner.
 - **It only removes tool results.** In a mostly-chat session there's little to cut, and it falls back to the built-in summary.
 - **Privacy:** your conversation text, tool inputs and result previews are sent to TypeSafe or OpenRouter, depending on your key. The built-in compaction stays with Anthropic.
-- **The drawer is never cleaned up automatically.** Delete `.jev-drawer/` whenever you like. After that, any labels still in the session point at nothing, so Claude just re-reads or re-runs.
+- **The drawer is never cleaned up automatically.** Delete `~/.claude/jev-drawer/` whenever you like. After that, any labels still in the session point at nothing, so Claude just re-reads or re-runs.
 - **Early-access hooks:** function hooks are early access in Claude Code, and the API may change.
 
 ## Development

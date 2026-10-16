@@ -341,6 +341,8 @@ export function summarize(result: CompactResult): string {
   const parts = [
     stats.kept > 0 ? `${stats.kept} kept` : '',
     stats.resultsDropped > 0 ? `${stats.resultsDropped} results moved to drawer` : '',
+    stats.inputsMoved > 0 ? `${stats.inputsMoved} long inputs moved to drawer` : '',
+    stats.noticesMoved > 0 ? `${stats.noticesMoved} host notices moved to drawer` : '',
     stats.callsDropped > 0 ? `${stats.callsDropped} call_dropped` : '',
     stats.pinned > 0 ? `${stats.pinned} pinned` : '',
   ].filter(Boolean);

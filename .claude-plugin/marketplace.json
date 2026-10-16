@@ -9,7 +9,7 @@
       "name": "jev-compaction-plus",
       "source": "./",
       "description": "Claude Code compaction in half a second: Jev keeps what's still needed word for word, and moves the rest to a drawer file instead of deleting it.",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "license": "MIT"
     }
   ]

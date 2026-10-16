@@ -141,6 +141,10 @@ export interface CompactResult {
     calls: number;
     kept: number;
     resultsDropped: number;
+    /** Tool calls whose long input fields moved to the drawer. */
+    inputsMoved: number;
+    /** Host-written user messages moved to the drawer. */
+    noticesMoved: number;
     callsDropped: number;
     pinned: number;
     stateTokens: number;

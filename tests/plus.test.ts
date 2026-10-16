@@ -180,6 +180,7 @@ describe('this fork: long input fields move to the drawer', () => {
     expect(out.messages[3]!.toolUses[0]!.input).toEqual({ file_path: 'pinned.txt', content });
     expect(out.messages[2]).toBe(input[2]);
     expect(out.stats.charsAfter).toBeLessThan(out.stats.charsBefore - 4000);
+    expect(out.stats.inputsMoved).toBe(1);
   });
 });
 
@@ -202,6 +203,7 @@ describe('this fork: host-written user text moves to the drawer', () => {
     expect(out.messages[3]).toBe(input[3]);
     expect(out.messages[5]).toBe(input[5]);
     expect(out.drawer.filter((file) => file.path.endsWith('-host-text.txt')).map((file) => file.text)).toEqual([skill, notice]);
+    expect(out.stats.noticesMoved).toBe(2);
   });
 });
 

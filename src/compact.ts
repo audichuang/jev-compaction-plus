@@ -441,6 +441,8 @@ export async function compact(
       calls: calls.length,
       kept: count(decisions, 'kept'),
       resultsDropped: count(decisions, 'result_dropped'),
+      inputsMoved: inputStubs.size,
+      noticesMoved: textStubs.size,
       callsDropped: count(decisions, 'call_dropped'),
       pinned: count(decisions, 'pinned'),
       stateTokens: fitted.tokens,

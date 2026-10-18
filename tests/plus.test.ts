@@ -99,7 +99,7 @@ describe('jev-compaction-plus: dropped results move to a drawer', () => {
     expect(out.messages[1]).toBe(input[1]);
     const label = out.messages[2]!.toolResults![0]!.text;
     expect(label).toBe(
-      `[Jev compaction moved this ${bigLog.length}-char output to ${paths[1]}. Read that file if you need it again.]`,
+      `[Jev compaction moved this ${bigLog.length}-char output to ${paths[1]}. Read that file if you need it again; INDEX.md beside it lists everything moved.]`,
     );
     expect(out.messages).toHaveLength(input.length);
 
@@ -235,6 +235,31 @@ describe('this fork: short results keep a head', () => {
 
     const again = await compact(out.messages, jev(() => 1), { preserveRecentMessages: 2, drawerDir: '/d' });
     expect(again.stats.smallMoved).toBe(0);
+  });
+});
+
+describe('this fork: coin flips, errors and subagent answers keep a preview', () => {
+  it('keeps start and end above the pointer-only band, for errors and Agent results whatever the score', async () => {
+    const log = Array.from({ length: 400 }, (_, i) => `step ${i}`).join('\n') + '\nRESULT: 3 FAIL';
+    const input: SessionMessage[] = [
+      message('user', 'Run.', { handle: 'h-0' }),
+      call('a', 'Bash', { command: 'x' }, log), result('a', log),
+      call('b', 'Bash', { command: 'y' }, log), result('b', log),
+      call('c', 'Bash', { command: 'z' }, log), result('c', log, true),
+      call('d', 'Agent', { prompt: 'p' }, log), result('d', log),
+      message('assistant', 'done', { handle: 'h-9' }),
+    ];
+    const scores: Record<string, number> = { result_t1: 0.4, result_t2: 0.1, result_t3: 0.1, result_t4: 0.1 };
+    const out = await compact(input, jev((k) => scores[k] ?? 1), { preserveRecentMessages: 1, drawerDir: '/d' });
+    const text = (i: number) => out.messages[i]!.toolResults![0]!.text;
+    for (const i of [2, 6, 8]) {
+      expect(text(i)).toMatch(/^step 0\n/);
+      expect(text(i)).toContain('RESULT: 3 FAIL');
+      expect(text(i)).toMatch(/INDEX\.md beside it lists everything moved\.\]$/);
+    }
+    expect(text(4)).toMatch(/^\[Jev compaction moved this \d+-char output/);
+    const again = await compact(out.messages, jev(() => 0), { preserveRecentMessages: 1, drawerDir: '/d' });
+    expect(again.stats.resultsDropped + again.stats.smallMoved).toBe(0);
   });
 });
 

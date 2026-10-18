@@ -1,5 +1,5 @@
 import { noulAnswer } from './request.js';
-import { collectToolCalls, estimateTokens, fitState, isHostText, isPinned, sliceSurrogateSafe } from './state.js';
+import { collectToolCalls, estimateTokens, fitState, isHostText, isPinned, previewOf, sliceSurrogateSafe } from './state.js';
 import type {
   CallAnswer,
   CallDecision,
@@ -269,7 +269,7 @@ export function drawerFor(
   decisions: readonly CallDecision[],
   drawerDir: string,
   stamp: number,
-  limits: { minDropChars: number; headChars: number; preserveRecentMessages: number } = {
+  limits: { minDropChars: number; headChars: number; preserveRecentMessages: number; previewChars?: number } = {
     minDropChars: Infinity,
     headChars: 0,
     preserveRecentMessages: 0,
@@ -286,8 +286,9 @@ export function drawerFor(
   const drawer: { path: string; text: string }[] = [];
   if (!drawerDir) return { stubs, inputStubs, textStubs, drawer };
   const minChars = Math.max(limits.minDropChars, limits.headChars + 200);
+  // Every pointer names the index: the model rarely knows what it lost (past-compaction audit).
   const moved = (chars: number, what: string, path: string) =>
-    `[Jev compaction moved the rest of this ${chars}-char ${what} to ${path}. Read that file if you need it again.]`;
+    `[Jev compaction moved the rest of this ${chars}-char ${what} to ${path}. Read that file if you need it again; INDEX.md beside it lists everything moved.]`;
   const texts = new Map<string, string>();
   for (const message of messages) {
     for (const result of message.toolResults ?? []) texts.set(result.tool_use_id, result.text);
@@ -306,11 +307,13 @@ export function drawerFor(
     } catch {
       input = '[unserializable input]';
     }
-    drawer.push({ path, text: `${call.tool} ${input}\n\n${texts.get(call.tool_use_id) ?? ''}` });
-    stubs.set(
-      call.tool_use_id,
-      `[Jev compaction moved this ${call.resultChars}-char output to ${path}. Read that file if you need it again.]`,
-    );
+    const text = texts.get(call.tool_use_id) ?? '';
+    drawer.push({ path, text: `${call.tool} ${input}\n\n${text}` });
+    const pointer = `[Jev compaction moved this ${call.resultChars}-char output to ${path}. Read that file if you need it again; INDEX.md beside it lists everything moved.]`;
+    // Coin flips, errors and subagent answers keep their start and end, where verdicts and
+    // conclusions sit (PASS/FAIL, "this experiment is invalid"); clear drops keep the pointer.
+    const preview = decision.keepResult >= POINTER_ONLY_BELOW || call.isError || PREVIEW_TOOLS.has(call.tool);
+    stubs.set(call.tool_use_id, preview ? `${previewOf(text, limits.previewChars ?? 600)}\n${pointer}` : pointer);
     index.push(`- ${path}: ${call.tool} ${sliceSurrogateSafe(input, 0, 200)}`);
   }
   // Results under minDropChars are never asked about, so every round kept them all (30-86
@@ -360,6 +363,11 @@ export function drawerFor(
   }
   return { stubs, inputStubs, textStubs, drawer };
 }
+
+/** Below this keepResult a dropped result keeps only its drawer pointer; above, a preview too. */
+export const POINTER_ONLY_BELOW = 0.25;
+/** Tools whose output is already a conclusion: dropped, they still keep a preview. */
+const PREVIEW_TOOLS = new Set(['Agent', 'Task']);
 
 /** Characters of text, tool input and tool output a message holds. */
 export function messageChars(message: Message): number {
@@ -424,6 +432,7 @@ export async function compact(
     minDropChars: resolved.minDropChars,
     headChars: resolved.truncateHeadChars,
     preserveRecentMessages: resolved.preserveRecentMessages,
+    previewChars: resolved.previewChars,
   });
   // A call whose result went to the drawer keeps its tool_use, so report it as a moved
   // result: the toast and decision log say what the session actually lost.

@@ -15,7 +15,6 @@
 > | Drawer defaults to `~/.claude/jev-drawer`, outside every project; `keepThreshold` 0.6 from replayed real sessions; toast reports drawer-moved calls as moved results | this fork |
 > | Credential-shaped text (keys, tokens, `NAME=value` secrets, private keys) is redacted from every Jev request, previews included; the transcript is unchanged (upstream #98) | [socialadsmentor](https://github.com/socialadsmentor/fast-jev-compaction) `redact.ts` |
 > | Only the result question is asked (every call stays with the drawer), small and pinned results are not asked about; the default goal leaves host text out and `/compact <instructions>` reaches Jev; a 30 s deadline on the Jev round | this fork, after upstream #39/#50/#78/#117 |
-> | The plugin's own 60% auto-trigger is removed: the host refuses `$.session.compact` while a turn runs, so it never fired; Claude Code's auto-compaction goes through this hook anyway | this fork |
 > | Results under `minDropChars` are never asked about but no longer stay whole: past the protected window, unless an error, they keep a 300-char head and move to the drawer by rule (they were the biggest thing every round kept). An auto compaction below the minimum with the context under 70% full (Claude Code's idle compaction soon after the last round) leaves the conversation as it is instead of running the Opus summary | this fork |
 >
 > Costs, by design: kept messages are rebuilt, so their thinking blocks, images and attached rows
@@ -144,6 +143,7 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 | `minDropChars` | `1500` | Results shorter than this are never sent to Jev; past the protected window they keep a head and move to the drawer by rule (errors stay whole). |
 | `drawerDir` | `~/.claude/jev-drawer` | Where dropped results go; `~/` is the home folder, a relative path is resolved against the project. Empty = delete them like the original. |
 | `preserveRecentMessages` | `6` | Newest messages never touched. |
+| `compactAtPercent` | `60` | After an answer, compact once the context passes this percentage (the host refuses it while a turn still runs; it backs off 5 points after a skip). Claude Code's own and idle compactions also run through the plugin. |
 | `minReductionRatio` | `0.25` | Below this cut, use the built-in summary instead; an auto compaction with the context under 70% full is skipped instead. |
 | `maxStateTokens` | `14000` | Budget for the conversation view sent with every Jev request. |
 | `maxRequestTokens` | `30000` | Budget per Jev request (Jev's limit is 32k). |

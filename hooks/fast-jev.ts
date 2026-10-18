@@ -5,6 +5,7 @@ import type {
   SessionMessage,
   ToolResultSummary,
   ToolUseSummary,
+  TurnCompleteInput,
 } from 'claude-code';
 
 import { compact, reductionRatio, resolveOptions } from '../src/compact.js';
@@ -21,6 +22,7 @@ import type {
 } from '../src/types.js';
 
 const HOOK_DEFAULTS = {
+  compactAtPercent: 60,
   minReductionRatio: 0.25,
   model: DEFAULT_MODEL,
 };
@@ -42,6 +44,7 @@ export type HookFetch = (url: string, init?: HookFetchInit) => Promise<HookFetch
 
 export type HookConfig = CompactOptions & {
   apiKey?: string;
+  compactAtPercent: number;
   minReductionRatio: number;
   model: string;
   /** Alternate Jev endpoint. Unset: TypeSafe's own API, or OpenRouter's when the key is an OpenRouter key. */
@@ -75,6 +78,7 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   }
   const config: HookConfig = {
     ...numbers,
+    compactAtPercent: optionNumber(options, 'compactAtPercent', HOOK_DEFAULTS.compactAtPercent),
     minReductionRatio: optionNumber(
       options,
       'minReductionRatio',
@@ -450,6 +454,8 @@ async function contextPercent($: {
 
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
+  let compacting = false;
+  let lastSkipPercent = -Infinity;
 
   on('session.compact', async ($, event, next) => {
     // A subagent's or fork's own transcript goes to the built-in summary: a resumed
@@ -515,6 +521,30 @@ export const register: Register = (on: On, options: PluginOptions) => {
       );
       return event.trigger === 'plugin' ? { skip: error instanceof Error ? error.message : String(error) } : next(event);
     }
+  });
+
+  // Compacts at compactAtPercent of the window after an answer. The host refuses it while
+  // a turn still runs (it was refused 4 times and ran 17 at ~600k of 1M in real sessions).
+  on('turn.complete', async ($, event: TurnCompleteInput, next) => {
+    if (compacting || event.agentId || event.reason !== 'answer') return next(event);
+    compacting = true;
+    try {
+      const { context } = await $.session.usage();
+      const percentUsed = context.percent ?? 0;
+      if (percentUsed < configured.compactAtPercent || percentUsed < lastSkipPercent + 5) return next(event);
+      const result = await $.session.compact();
+      if (result && 'skip' in result) {
+        lastSkipPercent = percentUsed;
+        // ponytail: fixed +5-point backoff; make it an option if 5 proves wrong
+      }
+    } catch (error) {
+      $.ui.log(
+        `auto-compact skipped (${error instanceof Error ? error.message : String(error)})`,
+      );
+    } finally {
+      compacting = false;
+    }
+    return next(event);
   });
 };
 

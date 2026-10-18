@@ -1,6 +1,6 @@
 {
   "name": "jev-compaction-plus",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Claude Code compaction in half a second: Jev keeps what's still needed word for word, and moves the rest to a drawer file instead of deleting it.",
   "author": {
     "name": "audichuang",
@@ -26,6 +26,12 @@
       "title": "Recent messages to preserve",
       "description": "Number of newest messages pinned from compaction.",
       "default": 6
+    },
+    "compactAtPercent": {
+      "type": "number",
+      "title": "Compaction percentage",
+      "description": "Context percentage at which the plugin compacts after an answer (Claude Code's own auto and idle compactions run through it too).",
+      "default": 60
     },
     "minReductionRatio": {
       "type": "number",

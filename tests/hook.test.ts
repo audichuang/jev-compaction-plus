@@ -58,6 +58,8 @@ function fake$(options: Record<string, unknown> = {}) {
   const logs: string[] = [];
   let fetcher: any = async () => ({ status: 500, ok: false, text: 'error' });
   let writeFails = false;
+  let compactCalls = 0;
+  let percentUsed = 0;
   const $: any = {
     userConfig: { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1 },
     http: { fetch: (...args: any[]) => fetcher(...args) },
@@ -65,15 +67,15 @@ function fake$(options: Record<string, unknown> = {}) {
     clock: { sleep: (ms: number) => (ms > 0 ? new Promise<void>(() => {}) : Promise.resolve()) },
     fs: { exists: async () => false, write: async (path: string) => { if (writeFails) throw Error('write failed'); writes.push(path); } },
     ui: { log: (s: string) => logs.push(s), toast: () => {} },
-    session: { cwd: async () => '/tmp' },
+    session: { cwd: async () => '/tmp', usage: async () => ({ context: { percent: percentUsed } }), compact: async () => { compactCalls++; return { skip: 'skip' }; } },
   };
   register((name: string, handler: any) => { handlers[name] = handler; }, { apiKey: 'k', drawerDir: 'drawer', minDropChars: 0, preserveRecentMessages: 1, ...options } as any);
-  return { $, handlers, writes, logs, set fetch(f: any) { fetcher = f; }, set writeFails(v: boolean) { writeFails = v; } };
+  return { $, handlers, writes, logs, get compactCalls() { return compactCalls; }, set percent(p: number) { percentUsed = p; }, set fetch(f: any) { fetcher = f; }, set writeFails(v: boolean) { writeFails = v; } };
 }
 
 describe('hook config', () => {
   it('reads userConfig values and falls back to defaults', () => {
-    expect(resolveHookConfig({})).toEqual({ minReductionRatio: 0.25, model: 'jev-latest' });
+    expect(resolveHookConfig({})).toEqual({ compactAtPercent: 60, minReductionRatio: 0.25, model: 'jev-latest' });
     expect(
       resolveHookConfig({ apiKey: 'k', keepThreshold: 0.3, maxStateTokens: 1000, model: 'jev-x', goal: 'g', minReductionRatio: 'no' }),
     ).toEqual({
@@ -82,6 +84,7 @@ describe('hook config', () => {
       maxStateTokens: 1000,
       model: 'jev-x',
       goal: 'g',
+      compactAtPercent: 60,
       minReductionRatio: 0.25,
     });
   });
@@ -236,6 +239,34 @@ describe('registered hooks', () => {
     h.$.fs.exists = async (path: string) => path.endsWith('/.gitignore');
     await invoke(h, 'session.compact', event('manual'));
     expect(h.writes.some((path: string) => path.endsWith('/.gitignore'))).toBe(false);
+  });
+});
+
+describe('compactAtPercent', () => {
+  const answer = { reason: 'answer' };
+  const invoke = (h: ReturnType<typeof fake$>, e: any) => h.handlers['turn.complete'](h.$, e, (x: any) => x);
+
+  it('compacts after an answer at the threshold, not for subagents, other turns or overlaps', async () => {
+    const h = fake$(); h.percent = 59;
+    await invoke(h, answer);
+    expect(h.compactCalls).toBe(0);
+    h.percent = 70;
+    await invoke(h, { agentId: 'child', reason: 'answer' });
+    await invoke(h, { reason: 'aborted' });
+    let release!: () => void;
+    h.$.session.usage = () => new Promise((resolve: any) => { release = () => resolve({ context: { percent: 70 } }); });
+    const first = invoke(h, answer);
+    await Promise.resolve();
+    const second = invoke(h, answer);
+    release();
+    await Promise.all([first, second]);
+    expect(h.compactCalls).toBe(1);
+  });
+
+  it('backs off five percentage points after a skip', async () => {
+    const h = fake$();
+    for (const p of [61, 63, 66]) { h.percent = p; await invoke(h, answer); }
+    expect(h.compactCalls).toBe(2);
   });
 });
 

@@ -8,7 +8,7 @@ Claude Code mod（function-hook plugin），fork 自 cth9191/jev-compaction-plus
 - `npx vitest run`、`npm run typecheck`、`npm run validate:plugin`。validator 是 host 載入時的同一套靜態檢查，沒過的話 hook 會靜默載入失敗，`/compact` 直接走內建摘要，連 toast 都沒有。
 - 改到 hook 行為要實機驗證：先在 settings 關掉已安裝版（或用 `--settings '{"enabledPlugins":{"jev-compaction-plus@jev-compaction-plus":false}}'`），再 `claude -p "<prompt>" --plugin-dir . --debug-file <檔> < /dev/null`，debug 檔裡要看到 `hooks module jev-compaction-plus@inline loaded`。zsh 不會拆 `${X:+--flag $X}`，多步驟測試用 bash 腳本跑。
 - host 不會把 `isMeta` 列（載入的 skill 內文、teammate 訊息）交給 `session.compact`。重播腳本已排除它們；實測 host 給了什麼，在 hook 裡暫時 `$.ui.log` 一行 `event.messages` 摘要再看 debug 檔。
-- `$.session.compact()` 在回合進行中會被拒（含 turn.complete 裡），所以沒有自己的自動觸發；Claude Code 原生的自動壓縮（trigger `auto`）會經過這個 hook。
+- `compactAtPercent`（60）在 turn.complete 呼叫 `$.session.compact()`。回合還在跑時 host 會拒（真實紀錄被拒 4 次），但大多會成功：transcript 記成 `manual`，前面沒有 `/compact`，preTokens 落在 1M 的約 60%（17 次）。0.3.1 曾因只看到被拒就把它刪掉，0.3.4 加回來；判斷有沒有作用要看 boundary，不能只看錯誤。Claude Code 原生的自動和閒置壓縮（trigger `auto`）也會經過這個 hook。
 - 要讓 Jev 真的出手，session 要夠長：最新 `preserveRecentMessages`（6）則訊息和第一則都受保護，平行呼叫會拆成一個 block 一則訊息。用「一步一個 Read、依序讀 5 個 400 行檔」的寫法最穩。
 - resume 驗證：`/compact` 後用新 process `--resume` 問問題，再用 `jq -c 'select(.type=="assistant") | [.message.id, (.message.content|tostring|.[0:200])]' <jsonl> | sort | uniq -c | awk '$1>1'` 檢查有沒有重複（只比 message.id 不準，一個回覆本來就會寫成多行同 id）。
 

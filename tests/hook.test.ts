@@ -219,10 +219,13 @@ describe('registered hooks', () => {
 
   it('leaves an idle auto compaction below the minimum alone, but falls back when the window is full or unknown', async () => {
     const h = fake$(); h.fetch = jevFetch(() => 0.9);
-    h.$.session.usage = async () => ({ context: { percent: 30 } });
+    h.$.session.usage = async () => ({ context: { percent: 30, breakdown: { percentage: 40 } } });
     expect(await invoke(h, 'session.compact', event('auto'))).toEqual({ skip: 'below 25% minimum' });
     expect(await invoke(h, 'session.compact', event('manual'))).toHaveProperty('next');
-    h.$.session.usage = async () => ({ context: { percent: 90 } });
+    // A compaction window smaller than the model's can be full while the model's reads low.
+    h.$.session.usage = async () => ({ context: { percent: 30, breakdown: { percentage: 95 } } });
+    expect(await invoke(h, 'session.compact', event('auto'))).toHaveProperty('next');
+    h.$.session.usage = async () => ({ context: { percent: 30 } });
     expect(await invoke(h, 'session.compact', event('auto'))).toHaveProperty('next');
     h.$.session.usage = async () => { throw new Error('no usage'); };
     expect(await invoke(h, 'session.compact', event('auto'))).toHaveProperty('next');

@@ -430,10 +430,19 @@ const JEV_DEADLINE_MS = 30_000;
 /** Below this context fill an auto compaction is the idle one, not a full window. */
 const ROOMY_PERCENT = 70;
 
-/** The context window's fill; 100 when unknown, so the safe fallback still runs. */
-async function contextPercent($: { session: { usage: () => Promise<{ context: { percent?: number } }> } }): Promise<number> {
+/**
+ * The context's fill: the higher of the model window's and the compaction window's
+ * (which may be smaller and is what auto-compaction fires on); 100 when unknown, so
+ * the safe fallback still runs.
+ */
+async function contextPercent($: {
+  session: {
+    usage: (args: { breakdown: 'summary' }) => Promise<{ context: { percent?: number; breakdown?: { percentage: number } } }>;
+  };
+}): Promise<number> {
   try {
-    return (await $.session.usage()).context.percent ?? 100;
+    const { context } = await $.session.usage({ breakdown: 'summary' });
+    return Math.max(context.percent ?? 100, context.breakdown?.percentage ?? 100);
   } catch {
     return 100;
   }

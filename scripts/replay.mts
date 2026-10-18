@@ -91,6 +91,17 @@ function quantiles(values: number[]): string {
   return `p10 ${at(0.1)} p50 ${at(0.5)} p90 ${at(0.9)} max ${at(0.999)}`;
 }
 
+/** Where the compacted chars sit, in thousands: what a lower reduction is made of. */
+function left(messages: readonly Message[]): string {
+  const k = { user: 0, assistant: 0, inputs: 0, results: 0 };
+  for (const m of messages) {
+    k[m.role] += m.text.length;
+    for (const use of m.toolUses) k.inputs += JSON.stringify(use.input).length;
+    for (const r of m.toolResults ?? []) k.results += r.text.length;
+  }
+  return Object.entries(k).map(([key, chars]) => `${key} ${Math.round(chars / 1000)}k`).join(' ');
+}
+
 const client = new JevClient();
 let redacted = 0;
 // Same redaction the hook's jevAsker applies, so the replay sends what the plugin sends.
@@ -127,6 +138,7 @@ for (const file of process.argv.slice(2)) {
         `stage ${stats.stateStage} ×${stats.requests}`,
         `unpaired ${before}→${unpaired(out).length}`,
         `redacted ${redacted}`,
+        `left ${left(result.messages)}`,
       ].join(' | '),
     );
   } catch (error) {

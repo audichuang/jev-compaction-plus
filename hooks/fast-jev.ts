@@ -341,6 +341,7 @@ export function summarize(result: CompactResult): string {
   const parts = [
     stats.kept > 0 ? `${stats.kept} kept` : '',
     stats.resultsDropped > 0 ? `${stats.resultsDropped} results moved to drawer` : '',
+    stats.smallMoved > 0 ? `${stats.smallMoved} short results cut to a head` : '',
     stats.inputsMoved > 0 ? `${stats.inputsMoved} long inputs moved to drawer` : '',
     stats.noticesMoved > 0 ? `${stats.noticesMoved} host notices moved to drawer` : '',
     stats.callsDropped > 0 ? `${stats.callsDropped} call_dropped` : '',
@@ -426,6 +427,18 @@ function notify(
 /** How long a compaction waits for Jev before falling back: the host's fetch has no timeout (upstream #117). */
 const JEV_DEADLINE_MS = 30_000;
 
+/** Below this context fill an auto compaction is the idle one, not a full window. */
+const ROOMY_PERCENT = 70;
+
+/** The context window's fill; 100 when unknown, so the safe fallback still runs. */
+async function contextPercent($: { session: { usage: () => Promise<{ context: { percent?: number } }> } }): Promise<number> {
+  try {
+    return (await $.session.usage()).context.percent ?? 100;
+  } catch {
+    return 100;
+  }
+}
+
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
 
@@ -472,11 +485,14 @@ export const register: Register = (on: On, options: PluginOptions) => {
         }
       }
       if (ratio < config.minReductionRatio) {
+        // The idle auto-compaction fires soon after the last round, when little is new:
+        // with room left, leaving the conversation as it is beats the built-in summary.
+        const skip = event.trigger === 'plugin' || (event.trigger === 'auto' && (await contextPercent($)) < ROOMY_PERCENT);
         notify(
           $,
-          `${event.trigger === 'plugin' ? 'skipped, conversation unchanged' : 'fallback to built-in summary'} (below ${percent(config.minReductionRatio)} minimum: ${summarize(result)})`,
+          `${skip ? 'skipped, conversation unchanged' : 'fallback to built-in summary'} (below ${percent(config.minReductionRatio)} minimum: ${summarize(result)})`,
         );
-        return event.trigger === 'plugin' ? { skip: `below ${percent(config.minReductionRatio)} minimum` } : next(event);
+        return skip ? { skip: `below ${percent(config.minReductionRatio)} minimum` } : next(event);
       }
       notify(
         $,

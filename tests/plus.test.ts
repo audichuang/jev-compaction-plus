@@ -6,6 +6,7 @@ import {
   OPENROUTER_URL,
   resolveEndpoint,
   resolveHookConfig,
+  summarize,
   toSessionMessages,
 } from '../hooks/fast-jev.ts';
 import { collectToolCalls, compact, questionsFor, type JevAsker, type Message } from '../src/index.js';
@@ -204,6 +205,36 @@ describe('this fork: host-written user text moves to the drawer', () => {
     expect(out.messages[5]).toBe(input[5]);
     expect(out.drawer.filter((file) => file.path.endsWith('-host-text.txt')).map((file) => file.text)).toEqual([skill, notice]);
     expect(out.stats.noticesMoved).toBe(2);
+  });
+});
+
+describe('this fork: short results keep a head', () => {
+  it('cuts unpinned short results by rule, leaves errors, tiny and pinned ones, and never re-moves a head', async () => {
+    const mid = 'm'.repeat(1000);
+    const input: SessionMessage[] = [
+      message('user', 'Check.', { handle: 'h-0' }),
+      call('s1', 'Bash', { command: 'ls' }, mid),
+      result('s1', mid),
+      call('s2', 'Bash', { command: 'false' }, mid),
+      result('s2', mid, true),
+      call('s3', 'Bash', { command: 'pwd' }, '/tmp'),
+      result('s3', '/tmp'),
+      call('s4', 'Bash', { command: 'ls' }, mid),
+      result('s4', mid),
+    ];
+    const out = await compact(input, jev(() => 1), { preserveRecentMessages: 2, drawerDir: '/d' });
+    const head = out.messages[2]!.toolResults![0]!.text;
+    expect(head).toMatch(new RegExp(`^${'m'.repeat(300)}\\n\\[Jev compaction moved the rest of this 1000-char output to /d/.+-Bash\\.txt\\.`));
+    expect(out.drawer.some((file) => file.text.endsWith(mid) && file.path.endsWith('t1-Bash.txt'))).toBe(true);
+    expect(out.messages[1]).toBe(input[1]);
+    expect(out.messages[4]).toBe(input[4]);
+    expect(out.messages[6]).toBe(input[6]);
+    expect(out.messages[8]).toBe(input[8]);
+    expect(out.stats.smallMoved).toBe(1);
+    expect(summarize(out)).toContain('1 short results cut to a head');
+
+    const again = await compact(out.messages, jev(() => 1), { preserveRecentMessages: 2, drawerDir: '/d' });
+    expect(again.stats.smallMoved).toBe(0);
   });
 });
 

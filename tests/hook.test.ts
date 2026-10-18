@@ -217,6 +217,17 @@ describe('registered hooks', () => {
     expect(h.logs.some((line: string) => line.startsWith('fallback'))).toBe(false);
   });
 
+  it('leaves an idle auto compaction below the minimum alone, but falls back when the window is full or unknown', async () => {
+    const h = fake$(); h.fetch = jevFetch(() => 0.9);
+    h.$.session.usage = async () => ({ context: { percent: 30 } });
+    expect(await invoke(h, 'session.compact', event('auto'))).toEqual({ skip: 'below 25% minimum' });
+    expect(await invoke(h, 'session.compact', event('manual'))).toHaveProperty('next');
+    h.$.session.usage = async () => ({ context: { percent: 90 } });
+    expect(await invoke(h, 'session.compact', event('auto'))).toHaveProperty('next');
+    h.$.session.usage = async () => { throw new Error('no usage'); };
+    expect(await invoke(h, 'session.compact', event('auto'))).toHaveProperty('next');
+  });
+
   it('preserves an existing drawer gitignore', async () => {
     const h = fake$(); h.fetch = okFetch;
     h.$.fs.exists = async (path: string) => path.endsWith('/.gitignore');

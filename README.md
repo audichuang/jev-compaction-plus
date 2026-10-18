@@ -16,6 +16,7 @@
 > | Credential-shaped text (keys, tokens, `NAME=value` secrets, private keys) is redacted from every Jev request, previews included; the transcript is unchanged (upstream #98) | [socialadsmentor](https://github.com/socialadsmentor/fast-jev-compaction) `redact.ts` |
 > | Only the result question is asked (every call stays with the drawer), small and pinned results are not asked about; the default goal leaves host text out and `/compact <instructions>` reaches Jev; a 30 s deadline on the Jev round | this fork, after upstream #39/#50/#78/#117 |
 > | The plugin's own 60% auto-trigger is removed: the host refuses `$.session.compact` while a turn runs, so it never fired; Claude Code's auto-compaction goes through this hook anyway | this fork |
+> | Results under `minDropChars` are never asked about but no longer stay whole: past the protected window, unless an error, they keep a 300-char head and move to the drawer by rule (they were the biggest thing every round kept). An auto compaction below the minimum with the context under 70% full (Claude Code's idle compaction soon after the last round) leaves the conversation as it is instead of running the Opus summary | this fork |
 >
 > Costs, by design: kept messages are rebuilt, so their thinking blocks, images and attached rows
 > (queued mid-turn prompts among them, upstream #133) are lost at compaction. The drawer is never pruned.
@@ -140,10 +141,10 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 |---|---:|---|
 | `keepThreshold` | `0.6` | Jev's minimum "still needed" probability to keep a result. **Lower is more cautious.** |
 | `previewChars` | `600` | How much of each result Jev sees (start + end). |
-| `minDropChars` | `1500` | Results shorter than this are always kept. |
+| `minDropChars` | `1500` | Results shorter than this are never sent to Jev; past the protected window they keep a head and move to the drawer by rule (errors stay whole). |
 | `drawerDir` | `~/.claude/jev-drawer` | Where dropped results go; `~/` is the home folder, a relative path is resolved against the project. Empty = delete them like the original. |
 | `preserveRecentMessages` | `6` | Newest messages never touched. |
-| `minReductionRatio` | `0.25` | Below this cut, use the built-in summary instead. |
+| `minReductionRatio` | `0.25` | Below this cut, use the built-in summary instead; an auto compaction with the context under 70% full is skipped instead. |
 | `maxStateTokens` | `14000` | Budget for the conversation view sent with every Jev request. |
 | `maxRequestTokens` | `30000` | Budget per Jev request (Jev's limit is 32k). |
 | `model` | `jev-latest` | Jev model. With an OpenRouter key this becomes `typesafe/jev-1.13`. |

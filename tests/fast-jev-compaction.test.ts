@@ -377,7 +377,7 @@ describe('compact', () => {
   });
 
   it('reports a tiny reduction when Jev wants everything kept', async () => {
-    const output = await compact(transcript(), fakeJev(() => 0.95), { preserveRecentMessages: 1 });
+    const output = await compact(transcript(), fakeJev(() => 0.95), { preserveRecentMessages: 1, minDropChars: 0 });
     expect(output.decisions.every((d) => d.action === 'keep')).toBe(true);
     expect(reductionRatio(output)).toBe(0);
   });

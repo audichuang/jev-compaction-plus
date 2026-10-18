@@ -141,6 +141,8 @@ export interface CompactResult {
     calls: number;
     kept: number;
     resultsDropped: number;
+    /** Results under minDropChars cut to a head by rule, the rest in the drawer. */
+    smallMoved: number;
     /** Tool calls whose long input fields moved to the drawer. */
     inputsMoved: number;
     /** Host-written user messages moved to the drawer. */

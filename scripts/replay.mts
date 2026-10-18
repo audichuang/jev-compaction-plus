@@ -4,7 +4,7 @@
  * would send next: every tool_use answered in the user turn right after it.
  * Prints the keepResult distribution, the calibration input for keepThreshold.
  *
- *   TYPESAFE_API_KEY=... [KEEP=0.6] npx tsx scripts/replay.mts <session.jsonl>...
+ *   TYPESAFE_API_KEY=... [KEEP=0.6] [ROUNDS=3] npx tsx scripts/replay.mts <session.jsonl>...
  *
  * Sends the transcript to Jev, as the plugin itself does on /compact.
  */
@@ -113,6 +113,36 @@ const asker = {
     return client.ask(s.value, q.value);
   },
 };
+const keep = process.env['KEEP'] ? { keepThreshold: Number(process.env['KEEP']) } : {};
+const rounds = Number(process.env['ROUNDS'] ?? 1);
+
+/**
+ * ROUNDS=n: cuts the transcript into n parts at typed user messages, compacts the
+ * first, appends the next part to the compacted output and compacts again, as a long
+ * session does. Prints each round's chars before→after: what survives every round.
+ */
+async function multiRound(messages: Message[]): Promise<string> {
+  const cuts: number[] = [];
+  for (let k = 1; k < rounds; k++) {
+    const target = Math.floor((k * messages.length) / rounds);
+    const at = messages.findIndex((m, i) => i >= target && m.role === 'user' && !m.toolResults?.length && m.text.trim() !== '');
+    if (at > (cuts.at(-1) ?? 0)) cuts.push(at);
+  }
+  cuts.push(messages.length);
+  let carried: Message[] = [];
+  let from = 0;
+  const out: string[] = [];
+  for (const cut of cuts) {
+    const input = [...carried, ...messages.slice(from, cut)];
+    from = cut;
+    const result = await compact(input, asker, { drawerDir: '/tmp/replay-drawer', ...keep });
+    carried = result.messages;
+    const fell = reductionRatio(result) < 0.25 ? ' FALLBACK' : '';
+    out.push(`r${out.length + 1} ${Math.round(result.stats.charsBefore / 1000)}k→${Math.round(result.stats.charsAfter / 1000)}k${fell} (short cut ${result.stats.smallMoved}, unpaired ${unpaired(toSessionMessages(input, result.messages)).length})`);
+  }
+  return `${out.join(' | ')} | left ${left(carried)}`;
+}
+
 for (const file of process.argv.slice(2)) {
   const messages = toMessages(firstRound(file));
   const name = file.split('/').pop()!.slice(0, 8);
@@ -120,10 +150,18 @@ for (const file of process.argv.slice(2)) {
     console.log(`${name} | no messages`);
     continue;
   }
+  if (rounds > 1) {
+    try {
+      console.log(`${name} | ${await multiRound(messages)}`);
+    } catch (error) {
+      console.log(`${name} | throws: ${(error as Error).message.slice(0, 160)}`);
+    }
+    continue;
+  }
   try {
     const before = unpaired(messages).length;
     redacted = 0;
-    const result = await compact(messages, asker, { drawerDir: '/tmp/replay-drawer', ...(process.env['KEEP'] ? { keepThreshold: Number(process.env['KEEP']) } : {}) });
+    const result = await compact(messages, asker, { drawerDir: '/tmp/replay-drawer', ...keep });
     const out = toSessionMessages(messages, result.messages);
     const { stats } = result;
     const scored = result.decisions.filter((d) => d.reason !== 'pinned' && d.reason !== 'small');

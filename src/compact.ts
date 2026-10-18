@@ -313,6 +313,19 @@ export function drawerFor(
     );
     index.push(`- ${path}: ${call.tool} ${sliceSurrogateSafe(input, 0, 200)}`);
   }
+  // Results under minDropChars are never asked about, so every round kept them all (30-86
+  // per real session). By rule they keep a head and move the rest; errors stay whole, and
+  // a head already pointing to the drawer is not moved again.
+  const smallMin = limits.headChars + 200;
+  for (const decision of decisions) {
+    const call = byId.get(decision.id);
+    const text = call ? texts.get(call.tool_use_id) ?? '' : '';
+    if (!call || decision.reason !== 'small' || call.isError || text.length < smallMin || text.includes('[Jev compaction moved')) continue;
+    const path = `${folder}/${call.id}-${call.tool.replace(/[^A-Za-z0-9_-]/g, '_')}.txt`;
+    drawer.push({ path, text: `${call.tool} ${JSON.stringify(call.input)}\n\n${text}` });
+    stubs.set(call.tool_use_id, `${sliceSurrogateSafe(text, 0, limits.headChars)}\n${moved(text.length, 'output', path)}`);
+    index.push(`- ${path}: ${call.tool} short output`);
+  }
   // Long string fields of a call's own input (Write content, Bash heredocs, Agent
   // prompts) are a third of a real session and never a Jev candidate: by rule, like
   // minDropChars, they keep a head and move the rest to the drawer.
@@ -415,11 +428,11 @@ export async function compact(
   // A call whose result went to the drawer keeps its tool_use, so report it as a moved
   // result: the toast and decision log say what the session actually lost.
   const toolUseIds = new Map(calls.map((call) => [call.id, call.tool_use_id]));
-  const decisions = decided.map((decision): CallDecision =>
-    decision.action === 'drop_call' && stubs.has(toolUseIds.get(decision.id) ?? '')
-      ? { ...decision, action: 'drop_result', reason: 'result_dropped' }
-      : decision,
-  );
+  const decisions = decided.map((decision): CallDecision => {
+    if (!stubs.has(toolUseIds.get(decision.id) ?? '')) return decision;
+    if (decision.action === 'drop_call') return { ...decision, action: 'drop_result', reason: 'result_dropped' };
+    return decision.reason === 'small' ? { ...decision, action: 'drop_result' } : decision;
+  });
   const kept = applyDecisions(
     messages,
     decisions,
@@ -441,6 +454,7 @@ export async function compact(
       calls: calls.length,
       kept: count(decisions, 'kept'),
       resultsDropped: count(decisions, 'result_dropped'),
+      smallMoved: decisions.filter((d) => d.reason === 'small' && d.action === 'drop_result').length,
       inputsMoved: inputStubs.size,
       noticesMoved: textStubs.size,
       callsDropped: count(decisions, 'call_dropped'),

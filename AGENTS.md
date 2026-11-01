@@ -5,6 +5,7 @@ Claude Code mod（function-hook plugin），fork 自 cth9191/jev-compaction-plus
 ## 改完必跑
 
 - 發版前跑 `scripts/replay.mts`（用法在檔頭）重播幾個真實 session：每個的 reduction 都要 ≥ 25%、`unpaired` 輸出側要是 0；`ROUNDS=3` 看多輪，`left` 欄看剩下的是什麼。這也是調門檻的資料來源（`KEEP=0.6` 可換門檻比較）。挑的 session 路徑和輸出含客戶專案名，不要進 repo。
+- **reduction 不是實際效果**：它只算 hook 看得到的字元，host 還會帶 system、工具、附件。實際數字跑 `scripts/wire/wire.sh <標籤> <plugin 目錄> <session id> <cwd>`：fork 真實 session、`/compact`、新 process 問一句，側錄送出的請求（`classify.py` 分類，`count.py` 用 count_tokens 量每類 token）。token 約 2 字元/個，不要用 3–4 估。
 - `npx vitest run`、`npm run typecheck`、`npm run validate:plugin`。validator 是 host 載入時的同一套靜態檢查，沒過的話 hook 會靜默載入失敗，`/compact` 直接走內建摘要，連 toast 都沒有。
 - 改到 hook 行為要實機驗證：先在 settings 關掉已安裝版（或用 `--settings '{"enabledPlugins":{"jev-compaction-plus@jev-compaction-plus":false}}'`），再 `claude -p "<prompt>" --plugin-dir . --debug-file <檔> < /dev/null`，debug 檔裡要看到 `hooks module jev-compaction-plus@inline loaded`。zsh 不會拆 `${X:+--flag $X}`，多步驟測試用 bash 腳本跑。
 - host 不會把 `isMeta` 列（載入的 skill 內文、teammate 訊息）交給 `session.compact`。重播腳本已排除它們；實測 host 給了什麼，在 hook 裡暫時 `$.ui.log` 一行 `event.messages` 摘要再看 debug 檔。
@@ -14,10 +15,12 @@ Claude Code mod（function-hook plugin），fork 自 cth9191/jev-compaction-plus
 
 ## 不可退回的設計
 
-- `toSessionMessages` 只有「沒有 tool result 的 user 訊息」原封回傳（帶 handle），其他一律重建。帶 handle 回傳會讓 resume 丟歷史（#89/#145）或重複 assistant 訊息（#129）。等 anthropics/claude-code#95328、#99727 修好才可以退回。
+- `toSessionMessages` 只有「最新 `preserveRecentMessages` 則內、沒有 tool result 的 user 訊息」，以及文字為空或含 `[Image` 的（可能帶圖，host 不給判斷依據）原封回傳（帶 handle），其他一律重建。舊 user 訊息帶 handle 會把舊 SessionStart、prompt.submit 的 hook 內容一起帶回（實測請求裡有 39k 字元的舊 ponytail，host 又注入一份新的）。帶 handle 回傳會讓 resume 丟歷史（#89/#145）或重複 assistant 訊息（#129）。等 anthropics/claude-code#95328、#99727 修好才可以退回。
 - 同一個回覆的平行 call 要重建成一則訊息（`responseStarts` + `sourceIndices`），否則 host 會把結果換成 "Tool result missing"（#137）。
 - `keepThreshold` 0.6、`minReductionRatio` 0.25 是用 `scripts/replay.mts` 在 10 個真實 session 上量出來的（有預覽時 keepResult 中位數約 0.45）。drawer 模式下門檻太高只是多一次讀檔，太低會讓 session 退回內建摘要（0.2 時實際發生過）。不要靠降 `minReductionRatio` 解決退回：永遠不是候選的東西會一直累積，下一輪還是退回。
 - Jev 丟掉的結果分兩層：keepResult ≥ `POINTER_ONLY_BELOW`（0.25）、錯誤、`Agent`/`Task` 的回傳，留頭尾預覽（`previewChars`）加 drawer 指標；更低的只留指標。每個指標都寫出 INDEX.md。來由：稽核 18 次真實壓縮，模型多半不知道自己丟了什麼，會痛的是只存在 result 裡的結論（PASS/FAIL、「這實驗無效」）。代價是單輪 reduction 少 6–16 點（重播）；預覽縮到 400 字只拿回 1–2 點，不值得。不要改成叫 LLM 逐項摘要：Jev 只回機率不能產文字，中間帶數量多，30 秒做不完（docs/research/compaction-approaches.md）。
+- 最新 `keepRecentCalls`（30）個以外的呼叫折疊成圖例訊息的一行（`t12 Read a.ts`），內容進 drawer，不問 Jev；錯誤、`Agent`/`Task`、`AskUserQuestion`、受保護的不折疊，助理文字全留。呼叫本身是壓完後最大宗（實測 tool_use 佔 30K/127K）。圖例排在第一則之後、任何舊圖例之後，不會插在呼叫和結果之間。實測（E2，6 個真實 session、15 題 Opus）：找回率和舊版同為 11/15，代價是多一次 Read。
+- LLMLingua 不採用（docs/research/llmlingua-*.md）：能碰的散文只佔約 5K token，會弄壞路徑、JSON、`FAIL`，中文否定詞會消失，CPU 外推超過 30 秒期限。
 - 小結果（< `minDropChars`）不問 Jev，但保護範圍外、非錯誤、≥ 500 字的照規則留 300 字開頭、其餘進 drawer；已經是 drawer 開頭的不再搬。不搬的話每輪都整份留下（真實 session 每輪 30–86 個）。
 - Claude Code 會在閒置約 54 分鐘、context 至少 200K 時自動壓縮（trigger 一樣是 `auto`；CHANGELOG v2.1.299，`CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` 調門檻、`"idleCompaction": false` 關掉）。離上一輪不久時新內容少，壓縮率會不到 25%（`ROUNDS=3` 重播：6 個 session 有 4 個在第 2、3 輪掉到 25% 以下）。這時若 `$.session.usage()` 的 context 低於 70% 就 `{ skip }`，不要退回 Opus 摘要；讀不到用量或快滿了才退回。
 - 大的 tool 輸入欄位（Write content、Bash command、Agent prompt）和系統寫入的 user 文字（skill 內文、task-notification、system-reminder）照規則搬進 drawer，不問 Jev。它們在真實 session 佔一半以上，不搬的話一半的壓縮會退回內建摘要。使用者打的字和 `<pasted_content>` 絕不動。

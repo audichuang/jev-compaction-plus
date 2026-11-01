@@ -62,7 +62,7 @@ export interface CallDecision extends CallAnswer {
   id: string;
   tool: string;
   action: CallAction;
-  reason: 'pinned' | 'small' | 'kept' | 'result_dropped' | 'call_dropped';
+  reason: 'pinned' | 'small' | 'kept' | 'result_dropped' | 'call_dropped' | 'folded';
 }
 
 export interface HistoryToolCall {
@@ -111,6 +111,8 @@ export interface CompactOptions {
   previewChars?: number;
   /** Results shorter than this are always kept. Default 1500. */
   minDropChars?: number;
+  /** Newest calls that stay as calls; older ones fold to a ledger line, their content in the drawer. 0 turns folding off. */
+  keepRecentCalls?: number;
   /** Folder (relative to the session) that dropped results move to; '' deletes them as before. Default '.jev-drawer'. */
   drawerDir?: string;
 }
@@ -124,6 +126,7 @@ export interface ResolvedCompactOptions {
   truncateHeadChars: number;
   previewChars: number;
   minDropChars: number;
+  keepRecentCalls: number;
   drawerDir: string;
 }
 
@@ -145,6 +148,8 @@ export interface CompactResult {
     smallMoved: number;
     /** Tool calls whose long input fields moved to the drawer. */
     inputsMoved: number;
+    /** Old calls folded to a ledger line. */
+    callsFolded: number;
     /** Host-written user messages moved to the drawer. */
     noticesMoved: number;
     callsDropped: number;

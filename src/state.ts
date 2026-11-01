@@ -98,6 +98,9 @@ const HOST_TEXT_PREFIXES = [
   'Base directory for this skill',
 ] as const;
 
+/** How the message listing a compaction's moved content starts: only this library writes it. */
+export const LEGEND_PREFIX = '[Jev compaction:';
+
 /** Whether a user-role text was written by the host, not typed or pasted by the user. */
 export function isHostText(text: string): boolean {
   const head = text.trimStart();
@@ -243,7 +246,8 @@ export function goalFromMessages(messages: readonly Message[]): string {
         message.role === 'user' &&
         message.text.trim().length > 0 &&
         (message.toolResults ?? []).length === 0 &&
-        !isHostText(message.text),
+        !isHostText(message.text) &&
+        !message.text.startsWith(LEGEND_PREFIX),
     )
     .slice(-3)
     .map((message) => truncate(message.text, 500))

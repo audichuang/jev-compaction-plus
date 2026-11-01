@@ -73,9 +73,8 @@ a yes/no question that quotes a preview of that result:
       ├─ no, but it's tiny (<1,500 chars) result stays (dropping it saves nothing)
       └─ no ............................. result moves to ~/.claude/jev-drawer/<time>/t12-Read.txt;
                                           the session keeps the call plus a one-line label:
-                                          [Jev compaction moved this 48213-char output to
-                                           …/.jev-drawer/…/t12-Read.txt. Read that file if
-                                           you need it again.]
+                                          [Jev moved 48213 chars to
+                                           …/.jev-drawer/…/t12-Read.txt]
 ```
 
 - **Always kept:**
@@ -141,6 +140,7 @@ Set these in the plugin's options (`.claude-plugin/plugin.json` → `userConfig`
 |---|---:|---|
 | `keepThreshold` | `0.6` | Jev's minimum "still needed" probability to keep a result. **Lower is more cautious.** |
 | `previewChars` | `600` | How much of each result Jev sees (start + end). |
+| `keepRecentCalls` | `30` | Newest calls that stay as calls; older ones fold to one line in a legend message, content in the drawer. Errors, `Agent`/`Task` and `AskUserQuestion` never fold. `0` turns this off. |
 | `minDropChars` | `1500` | Results shorter than this are never sent to Jev; past the protected window they keep a head and move to the drawer by rule (errors stay whole). |
 | `drawerDir` | `~/.claude/jev-drawer` | Where dropped results go; `~/` is the home folder, a relative path is resolved against the project. Empty = delete them like the original. |
 | `preserveRecentMessages` | `6` | Newest messages never touched. |

@@ -1,6 +1,6 @@
 {
   "name": "jev-compaction-plus",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "description": "Claude Code compaction in half a second: Jev keeps what's still needed word for word, and moves the rest to a drawer file instead of deleting it.",
   "author": {
     "name": "audichuang",
@@ -73,6 +73,12 @@
       "title": "Preview characters",
       "description": "Characters of each tool result (start and end) Jev sees when deciding whether to keep it.",
       "default": 600
+    },
+    "keepRecentCalls": {
+      "type": "number",
+      "title": "Recent calls to keep",
+      "description": "Newest tool calls that stay as calls. Older ones fold to one ledger line, their content in the drawer. 0 turns folding off.",
+      "default": 30
     },
     "minDropChars": {
       "type": "number",

@@ -72,6 +72,7 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     'truncateHeadChars',
     'previewChars',
     'minDropChars',
+    'keepRecentCalls',
   ] as const) {
     const value = options[key];
     if (typeof value === 'number' && Number.isFinite(value)) numbers[key] = value;
@@ -256,9 +257,21 @@ function sourceIndices(input: readonly Message[], output: readonly Message[]): n
  * one message with their results after it.
  * (Ported from orangewk/fast-jev-compaction 911ae3f, 5dad087, ad91a16.)
  */
+/**
+ * A handle brings back everything hung on the message, and old ones carry stale hook
+ * context the host injects again anyway (39k chars of SessionStart in a real request).
+ * So only the newest keep theirs, and those that may hold an image the host does not
+ * expose. shortcut: an old image without a `[Image` marker is lost, as in a built-in
+ * summary; upgrade if the host ever exposes non-text blocks.
+ */
+function keepsHandle(message: Message, at: number, total: number, preserveRecentMessages: number): boolean {
+  return at >= total - preserveRecentMessages || message.text.trim() === '' || message.text.includes('[Image');
+}
+
 export function toSessionMessages(
   input: readonly SessionMessage[],
   output: readonly Message[],
+  preserveRecentMessages = 6,
 ): SessionMessage[] {
   const messages = new Map<Message, SessionMessage>();
   const uses = new Map<ToolUse, ToolUseSummary>();
@@ -288,7 +301,7 @@ export function toSessionMessages(
     // reads from the boundary on and loses everything before the result (upstream #89,
     // #145). Rebuilt, it chains to the message before it; its attachments and non-text
     // blocks are lost.
-    if (own && own.role === 'user' && !own.toolResults?.length) {
+    if (own && own.role === 'user' && !own.toolResults?.length && keepsHandle(own, at, output.length, preserveRecentMessages)) {
       out.push(own);
       return;
     }
@@ -333,7 +346,7 @@ export async function compactSession(
     jevAsker(fetchFn, config.apiKey, endpoint.model, endpoint.baseUrl),
     config,
   );
-  return { result, messages: toSessionMessages(messages, result.messages) };
+  return { result, messages: toSessionMessages(messages, result.messages, resolveOptions(config).preserveRecentMessages) };
 }
 
 function percent(ratio: number): string {
@@ -346,12 +359,13 @@ export function summarize(result: CompactResult): string {
     stats.kept > 0 ? `${stats.kept} kept` : '',
     stats.resultsDropped > 0 ? `${stats.resultsDropped} results moved to drawer` : '',
     stats.smallMoved > 0 ? `${stats.smallMoved} short results cut to a head` : '',
+    stats.callsFolded > 0 ? `${stats.callsFolded} old calls folded` : '',
     stats.inputsMoved > 0 ? `${stats.inputsMoved} long inputs moved to drawer` : '',
     stats.noticesMoved > 0 ? `${stats.noticesMoved} host notices moved to drawer` : '',
     stats.callsDropped > 0 ? `${stats.callsDropped} call_dropped` : '',
     stats.pinned > 0 ? `${stats.pinned} pinned` : '',
   ].filter(Boolean);
-  return `${percent(reductionRatio(result))} reduction; ${
+  return `${percent(reductionRatio(result))} of history chars cut; ${
     parts.join(', ') || 'no tool calls'
   }; state ~${stats.stateTokens} tokens (${stats.stateStage}) in ${stats.requests} request(s)`;
 }

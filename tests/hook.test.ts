@@ -91,7 +91,7 @@ describe('hook config', () => {
 });
 
 describe('session message mapping', () => {
-  it('returns plain user messages as the engine objects and rebuilds every other message without a handle', () => {
+  it('returns only recent plain user messages as the engine objects and rebuilds every other message without a handle', () => {
     const messages = transcript();
     const calls = collectToolCalls(messages, 0);
     const decisions = [
@@ -102,7 +102,8 @@ describe('session message mapping', () => {
     messages[2]!.toolResults![0]!.text = 'x'.repeat(2000);
     const out = toSessionMessages(messages, applyDecisions(messages, decisions, calls, 300));
     expect(out).toHaveLength(messages.length);
-    expect(out[0]).toBe(messages[0]);
+    expect(out[0]).toMatchObject({ role: 'user', text: messages[0]!.text });
+    expect(out[0]?.handle).toBeUndefined();
     expect(out[1]?.handle).toBeUndefined();
     expect(out[1]?.toolUses[0]?.text).toMatch(
       new RegExp(`^${'x'.repeat(300)}\\n\\[fast-jev-compaction truncated 1700 chars`),
@@ -163,8 +164,8 @@ describe('compactSession', () => {
     expect(bodies).toHaveLength(1);
     expect(JSON.parse(bodies[0]!).model).toBe('jev-x');
     expect(output.decisions.map((d) => d.action)).toEqual(['drop_call', 'keep']);
-    expect(messages.map((m) => m.handle)).toEqual(['h-0', undefined, undefined, undefined, 'h-6']);
-    expect(summarize(output)).toMatch(/^\d+% reduction; 1 kept, 1 call_dropped; state ~\d+ tokens \(full\) in 1 request\(s\)$/);
+    expect(messages.map((m) => m.handle)).toEqual([undefined, undefined, undefined, undefined, 'h-6']);
+    expect(summarize(output)).toMatch(/^\d+% of history chars cut; 1 kept, 1 call_dropped; state ~\d+ tokens \(full\) in 1 request\(s\)$/);
     expect(decisionLog(output)).toBe('t1:Read:drop_call/call=0.10/result=0.10 t2:Bash:keep/call=0.90/result=0.90');
     expect(decisionLogLines(output)).toEqual([`decisions: ${decisionLog(output)}`]);
   });

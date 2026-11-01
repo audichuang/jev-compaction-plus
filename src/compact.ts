@@ -1,5 +1,5 @@
 import { noulAnswer } from './request.js';
-import { collectToolCalls, estimateTokens, fitState, isHostText, isPinned, previewOf, sliceSurrogateSafe } from './state.js';
+import { collectToolCalls, estimateTokens, fitState, isHostText, isPinned, LEGEND_PREFIX, previewOf, sliceSurrogateSafe } from './state.js';
 import type {
   CallAnswer,
   CallDecision,
@@ -26,6 +26,8 @@ export const DEFAULT_OPTIONS: ResolvedCompactOptions = {
   truncateHeadChars: 300,
   previewChars: 600,
   minDropChars: 1500,
+  // Calls are the largest part of what survives a compaction (wire measurement, scripts/wire).
+  keepRecentCalls: 30,
   drawerDir: '.jev-drawer',
 };
 
@@ -57,6 +59,7 @@ export function resolveOptions(options: CompactOptions = {}): ResolvedCompactOpt
     ),
     previewChars: Math.max(0, Math.floor(finite(options.previewChars, DEFAULT_OPTIONS.previewChars))),
     minDropChars: Math.max(0, finite(options.minDropChars, DEFAULT_OPTIONS.minDropChars)),
+    keepRecentCalls: Math.max(0, Math.floor(finite(options.keepRecentCalls, DEFAULT_OPTIONS.keepRecentCalls))),
     drawerDir: options.drawerDir ?? DEFAULT_OPTIONS.drawerDir,
   };
 }
@@ -279,23 +282,25 @@ export function drawerFor(
   inputStubs: Map<string, Record<string, unknown>>;
   textStubs: Map<Message, string>;
   drawer: { path: string; text: string }[];
+  legend: string;
 } {
   const stubs = new Map<string, string>();
   const inputStubs = new Map<string, Record<string, unknown>>();
   const textStubs = new Map<Message, string>();
   const drawer: { path: string; text: string }[] = [];
-  if (!drawerDir) return { stubs, inputStubs, textStubs, drawer };
-  const minChars = Math.max(limits.minDropChars, limits.headChars + 200);
-  // Every pointer names the index: the model rarely knows what it lost (past-compaction audit).
-  const moved = (chars: number, what: string, path: string) =>
-    `[Jev compaction moved the rest of this ${chars}-char ${what} to ${path}. Read that file if you need it again; INDEX.md beside it lists everything moved.]`;
+  if (!drawerDir) return { stubs, inputStubs, textStubs, drawer, legend: '' };
+  // Long input fields cut by rule, like short results: same floor as `smallMin` below.
+  const minChars = limits.headChars + 200;
+  // The legend explains the drawer once; 70+ repeated sentences cost 6K tokens a compaction.
+  const moved = (chars: number, _what: string, path: string) => `[Jev moved ${chars} chars to ${path}]`;
   const texts = new Map<string, string>();
   for (const message of messages) {
     for (const result of message.toolResults ?? []) texts.set(result.tool_use_id, result.text);
     for (const tool of message.toolUses) if (tool.text !== undefined && !texts.has(tool.tool_use_id)) texts.set(tool.tool_use_id, tool.text);
   }
   const byId = new Map(calls.map((call) => [call.id, call]));
-  const folder = `${drawerDir.replace(/[\\/]+$/, '')}/${new Date(stamp).toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}`;
+  const folder = `${drawerDir.replace(/[\\/]+$/, '')}/${new Date(stamp).toISOString().replace(/[:.]/g, '-').slice(0, 19)}-${crypto.randomUUID().slice(0, 8)}`;
+  const ledger: string[] = [];
   const index: string[] = ['# Results moved here by Jev compaction', ''];
   for (const decision of decisions) {
     const call = byId.get(decision.id);
@@ -309,7 +314,12 @@ export function drawerFor(
     }
     const text = texts.get(call.tool_use_id) ?? '';
     drawer.push({ path, text: `${call.tool} ${input}\n\n${text}` });
-    const pointer = `[Jev compaction moved this ${call.resultChars}-char output to ${path}. Read that file if you need it again; INDEX.md beside it lists everything moved.]`;
+    if (decision.reason === 'folded') {
+      ledger.push(`${call.id} ${call.tool} ${callTarget(call.input)}`);
+      index.push(`- ${path}: ${call.tool} ${sliceSurrogateSafe(input, 0, 200)}`);
+      continue;
+    }
+    const pointer = moved(call.resultChars, 'output', path);
     // Coin flips, errors and subagent answers keep their start and end, where verdicts and
     // conclusions sit (PASS/FAIL, "this experiment is invalid"); clear drops keep the pointer.
     const preview = decision.keepResult >= POINTER_ONLY_BELOW || call.isError || PREVIEW_TOOLS.has(call.tool);
@@ -323,7 +333,7 @@ export function drawerFor(
   for (const decision of decisions) {
     const call = byId.get(decision.id);
     const text = call ? texts.get(call.tool_use_id) ?? '' : '';
-    if (!call || decision.reason !== 'small' || call.isError || text.length < smallMin || text.includes('[Jev compaction moved')) continue;
+    if (!call || decision.reason !== 'small' || call.isError || text.length < smallMin || ALREADY_MOVED.test(text)) continue;
     const path = `${folder}/${call.id}-${call.tool.replace(/[^A-Za-z0-9_-]/g, '_')}.txt`;
     drawer.push({ path, text: `${call.tool} ${JSON.stringify(call.input)}\n\n${text}` });
     stubs.set(call.tool_use_id, `${sliceSurrogateSafe(text, 0, limits.headChars)}\n${moved(text.length, 'output', path)}`);
@@ -332,8 +342,9 @@ export function drawerFor(
   // Long string fields of a call's own input (Write content, Bash heredocs, Agent
   // prompts) are a third of a real session and never a Jev candidate: by rule, like
   // minDropChars, they keep a head and move the rest to the drawer.
+  const folded = new Set(decisions.filter((decision) => decision.reason === 'folded').map((decision) => decision.id));
   for (const call of calls) {
-    if (call.pinned) continue;
+    if (call.pinned || folded.has(call.id)) continue;
     let changed: Record<string, unknown> | undefined;
     for (const [field, value] of Object.entries(call.input)) {
       if (typeof value !== 'string' || value.length < minChars) continue;
@@ -349,7 +360,8 @@ export function drawerFor(
   // user role in a real session and re-derivable; outside the pinned messages it keeps a
   // head and moves to the drawer. Typed and pasted text is never touched.
   messages.forEach((message, at) => {
-    if (message.role !== 'user' || message.toolResults?.length || message.text.length < minChars) return;
+    // Higher floor than inputs: the host joins a message's text blocks, so typed command args can sit behind a host prefix.
+    if (message.role !== 'user' || message.toolResults?.length || message.text.length < Math.max(limits.minDropChars, minChars)) return;
     if (isPinned(at, messages.length, limits.preserveRecentMessages) || !isHostText(message.text)) return;
     const path = `${folder}/m${at}-host-text.txt`;
     drawer.push({ path, text: message.text });
@@ -361,7 +373,34 @@ export function drawerFor(
     drawer.unshift({ path: `${drawerDir.replace(/[\\/]+$/, '')}/.gitignore`, text: '*\n' });
     drawer.push({ path: `${folder}/INDEX.md`, text: index.join('\n') + '\n' });
   }
-  return { stubs, inputStubs, textStubs, drawer };
+  const legend =
+    drawer.length === 0
+      ? ''
+      : [
+          `${LEGEND_PREFIX} earlier content was moved to ${folder}. INDEX.md there lists it all; read a file only if you need it.]`,
+          ...(ledger.length > 0
+            ? [`${ledger.length} older calls, one line each (file: <id>-<tool>.txt):`, ...ledger]
+            : []),
+        ].join('\n');
+  return { stubs, inputStubs, textStubs, drawer, legend };
+}
+
+/** A drawer head or pointer, in either format this library has written. */
+const ALREADY_MOVED = /\[Jev (compaction )?moved/;
+/** Their answer is the conclusion or the user's own words: the call never folds. */
+const NEVER_FOLD = new Set(['Agent', 'Task', 'AskUserQuestion']);
+
+/** What a folded call acted on, short enough for one ledger line. */
+function callTarget(input: Record<string, unknown>): string {
+  for (const key of ['file_path', 'path', 'command', 'pattern', 'query', 'url', 'description']) {
+    const value = input[key];
+    if (typeof value === 'string' && value) return sliceSurrogateSafe(value.replace(/\s+/g, ' '), 0, 80);
+  }
+  try {
+    return sliceSurrogateSafe(JSON.stringify(input), 0, 60);
+  } catch {
+    return '';
+  }
 }
 
 /** Below this keepResult a dropped result keeps only its drawer pointer; above, a preview too. */
@@ -408,8 +447,13 @@ export async function compact(
   const resolved = resolveOptions(options);
   const calls = collectToolCalls(messages, resolved.preserveRecentMessages, resolved.previewChars);
   // Pinned calls and small results stay whatever Jev says, so they are not asked about.
-  const candidates = calls.filter((call) => !call.pinned && call.resultChars >= resolved.minDropChars);
   const resultOnly = resolved.drawerDir.length > 0;
+  // Old calls leave by rule, so Jev is not asked about them; only the drawer can hold what they drop.
+  const foldBefore = resultOnly && resolved.keepRecentCalls > 0 ? calls.length - resolved.keepRecentCalls : 0;
+  const folds = new Set(
+    calls.filter((call, at) => at < foldBefore && !call.pinned && !call.isError && !NEVER_FOLD.has(call.tool)).map((call) => call.id),
+  );
+  const candidates = calls.filter((call) => !call.pinned && !folds.has(call.id) && call.resultChars >= resolved.minDropChars);
   const charsBefore = messages.reduce((sum, message) => sum + messageChars(message), 0);
 
   let fitted: { tokens: number; stage: string } = { tokens: 0, stage: '' };
@@ -425,10 +469,12 @@ export async function compact(
     for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
   }
 
-  const decided = calls.map((call) =>
-    decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved),
+  const decided = calls.map((call): CallDecision =>
+    folds.has(call.id)
+      ? { id: call.id, tool: call.tool, keepCall: 0, keepResult: 0, action: 'drop_call', reason: 'folded' }
+      : decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved),
   );
-  const { stubs, inputStubs, textStubs, drawer } = drawerFor(messages, calls, decided, resolved.drawerDir, started, {
+  const { stubs, inputStubs, textStubs, drawer, legend } = drawerFor(messages, calls, decided, resolved.drawerDir, started, {
     minDropChars: resolved.minDropChars,
     headChars: resolved.truncateHeadChars,
     preserveRecentMessages: resolved.preserveRecentMessages,
@@ -451,6 +497,12 @@ export async function compact(
     inputStubs,
     textStubs,
   );
+  if (legend) {
+    // After the first message and any earlier legend: never between a call and its result.
+    let at = 1;
+    while (kept[at]?.text.startsWith(LEGEND_PREFIX)) at++;
+    kept.splice(at, 0, { role: 'user', text: legend, toolUses: [] });
+  }
   return {
     messages: kept,
     decisions,
@@ -465,6 +517,7 @@ export async function compact(
       resultsDropped: count(decisions, 'result_dropped'),
       smallMoved: decisions.filter((d) => d.reason === 'small' && d.action === 'drop_result').length,
       inputsMoved: inputStubs.size,
+      callsFolded: folds.size,
       noticesMoved: textStubs.size,
       callsDropped: count(decisions, 'call_dropped'),
       pinned: count(decisions, 'pinned'),
